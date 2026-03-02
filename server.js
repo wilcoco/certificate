@@ -234,13 +234,28 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
     const doc = new PDFDocument({ margin: 50 });
     doc.pipe(res);
 
-    const fontPath = path.join(
-      __dirname,
-      "assets",
-      "NotoSansKR-Regular.ttf"
+    const fontCandidates = [
+      path.join(__dirname, "assets", "NotoSansKR-Regular.ttf"),
+      path.join(
+        __dirname,
+        "assets",
+        "Noto_Sans_KR",
+        "static",
+        "NotoSansKR-Regular.ttf"
+      ),
+      path.join(
+        __dirname,
+        "assets",
+        "Noto_Sans_KR",
+        "NotoSansKR-VariableFont_wght.ttf"
+      ),
+    ];
+
+    const selectedFont = fontCandidates.find((candidate) =>
+      fs.existsSync(candidate)
     );
-    if (fs.existsSync(fontPath)) {
-      doc.font(fontPath);
+    if (selectedFont) {
+      doc.font(selectedFont);
     }
 
     doc.fontSize(13).fillColor("#444").text("주식회사 캠스", {

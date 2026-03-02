@@ -21,12 +21,17 @@ body {
   background: radial-gradient(circle at top, #fcebd5 0%, #f7f1ea 45%, #efe7df 100%);
   color: var(--ink);
   min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  touch-action: manipulation;
 }
 
 .app {
   max-width: 520px;
   margin: 0 auto;
   padding-bottom: 48px;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 
 .hero {
@@ -87,22 +92,36 @@ label {
 
 input {
   width: 100%;
-  padding: 14px 16px;
+  padding: 16px 18px;
   margin: 10px 0 16px;
-  border-radius: 14px;
+  border-radius: 16px;
   border: 1px solid var(--line);
   font-size: 1rem;
   background: #faf7f3;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(213, 108, 74, 0.1);
 }
 
 button {
   width: 100%;
-  padding: 14px 18px;
+  padding: 16px 20px;
   border: none;
-  border-radius: 14px;
+  border-radius: 16px;
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: transform 0.1s ease, box-shadow 0.2s ease;
+  min-height: 52px;
 }
 
 button.primary {
@@ -111,16 +130,31 @@ button.primary {
   box-shadow: 0 10px 22px rgba(213, 108, 74, 0.35);
 }
 
-button.primary:hover {
+button.primary:hover,
+button.primary:focus {
   background: var(--accent-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 12px 26px rgba(213, 108, 74, 0.4);
+}
+
+button.primary:active {
+  transform: translateY(0);
+  box-shadow: 0 8px 20px rgba(213, 108, 74, 0.35);
 }
 
 button.ghost {
   width: auto;
-  padding: 10px 14px;
+  padding: 12px 16px;
   border: 1px solid var(--line);
   background: transparent;
   color: var(--ink);
+  min-height: 44px;
+}
+
+button.ghost:hover,
+button.ghost:focus {
+  background: var(--bg);
+  transform: translateY(-1px);
 }
 
 .helper {
@@ -238,12 +272,18 @@ tbody tr:last-child td {
 }
 
 .certificate {
-  padding: 16px;
-  border-radius: 16px;
+  padding: 20px;
+  border-radius: 18px;
   border: 1px solid var(--line);
   display: grid;
-  gap: 10px;
+  gap: 12px;
   background: #fffaf4;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.certificate:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(29, 31, 34, 0.08);
 }
 
 .certificate h3 {
@@ -258,7 +298,54 @@ tbody tr:last-child td {
 }
 
 .certificate button {
-  margin-top: 6px;
+  margin-top: 8px;
+  min-height: 48px;
+}
+
+.certificate button:hover,
+.certificate button:focus {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(213, 108, 74, 0.3);
+}
+
+.certificate button:active {
+  transform: translateY(0);
+}
+
+@media (max-width: 480px) {
+  .hero {
+    padding: 28px 20px 16px;
+  }
+
+  .hero__title {
+    font-size: 1.8rem;
+  }
+
+  .main {
+    padding: 20px;
+  }
+
+  .card {
+    padding: 20px;
+  }
+
+  .status {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .certificate {
+    padding: 18px;
+  }
+
+  .action-group {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .action-group button {
+    width: 100%;
+  }
 }
 
 @media (min-width: 768px) {

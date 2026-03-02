@@ -2,7 +2,10 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>사내 문서 발급 포털</title>
     <link rel="stylesheet" href="styles.css" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -37,6 +40,11 @@
               placeholder="예: 1001"
               required
               inputmode="numeric"
+              pattern="[0-9]+"
+              autocomplete="username"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
             />
             <label for="password">비밀번호</label>
             <input
@@ -45,6 +53,10 @@
               type="password"
               placeholder="비밀번호 입력"
               required
+              autocomplete="current-password"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
             />
             <button type="submit" class="primary">로그인</button>
             <p class="helper">데모: 1001/1111, 1002/2222, 1003/3333</p>

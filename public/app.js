@@ -21,13 +21,32 @@ const state = {
   lastIssued: null,
 };
 
-const fetchJson = async (url, options) => {
-  const response = await fetch(url, options);
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.message || "요청에 실패했습니다.");
+const fetchJson = async (url, options = {}) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
+    clearTimeout(timeoutId);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || "요청에 실패했습니다.");
+    }
+    return data;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error("요청 시간이 초과되었습니다.");
+    }
+    throw error;
   }
-  return data;
 };
 
 const renderDashboard = () => {
@@ -82,6 +101,48 @@ const renderEmployees = () => {
     employeeTable.appendChild(row);
   });
 };
+
+// 모바일 터치 피드백 추가
+document.addEventListener('DOMContentLoaded', () => {
+  // 터치 디바이스 감지
+  const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  
+  if (isTouchDevice) {
+    // 버튼에 터치 피드백 추가
+    document.querySelectorAll('button').forEach(button => {
+      button.addEventListener('touchstart', function() {
+        this.style.transform = 'scale(0.98)';
+      }, { passive: true });
+      
+      button.addEventListener('touchend', function() {
+        this.style.transform = '';
+      }, { passive: true });
+    });
+    
+    // 입력 필드 포커스 시 키보드 공간 확보
+    const inputs = document.querySelectorAll('input[type="text"], input[type="password"], input[type="date"]');
+    inputs.forEach(input => {
+      input.addEventListener('focus', () => {
+        // iOS Safari에서 뷰포트 조정
+        const viewport = document.querySelector('meta[name="viewport"]');
+        if (viewport && /iPhone|iPad|iPod/.test(navigator.userAgent)) {
+          viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, height=device-height');
+        }
+      });
+      
+      input.addEventListener('blur', () => {
+        // 뷰포트 원복
+        const viewport = document.querySelector('meta[name="viewport"]');
+        if (viewport && /iPhone|iPad|iPod/.test(navigator.userAgent)) {
+          viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');
+        }
+      });
+    });
+  }
+  
+  // 세션 로드
+  loadSession();
+});
 
 const loadSession = async () => {
   try {
@@ -171,6 +232,8 @@ employeeTable.addEventListener("click", async (event) => {
   if (action === "delete") {
     if (!confirm("정말 삭제하시겠습니까?")) return;
     try {
+      button.textContent = "삭제 중...";
+      button.disabled = true;
       await fetchJson(`/api/employees/${id}`, { method: "DELETE" });
       state.employees = state.employees.filter(
         (record) => record.employeeId !== id
@@ -195,6 +258,9 @@ employeeTable.addEventListener("click", async (event) => {
 
     employeeForm.dataset.editing = id;
     employeeForm.querySelector("button").textContent = "사원 수정";
+    
+    // 모바일에서 폼 위치로 스크롤
+    employeeForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 });
 
@@ -209,6 +275,7 @@ certificateList.addEventListener("click", async (event) => {
   if (!button) return;
 
   const id = button.dataset.id;
+  const originalText = button.textContent;
   button.textContent = "다운로드 중...";
   button.disabled = true;
 
@@ -219,22 +286,45 @@ certificateList.addEventListener("click", async (event) => {
       throw new Error(data.message || "다운로드 실패");
     }
     const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${id}_certificate.pdf`;
-    link.click();
-    window.URL.revokeObjectURL(url);
+    
+    // 모바일에서 파일 다운로드 처리
+    if (navigator.share && navigator.canShare && blob.type === 'application/pdf') {
+      const file = new File([blob], `${id}_certificate.pdf`, { type: 'application/pdf' });
+      try {
+        await navigator.share({
+          title: `${state.certificates.find(c => c.id === id)?.title}`,
+          text: '문서가 발급되었습니다.',
+          files: [file],
+        });
+      } catch (shareError) {
+        // 공유 실패 시 기본 다운로드
+        downloadFile(blob, `${id}_certificate.pdf`);
+      }
+    } else {
+      downloadFile(blob, `${id}_certificate.pdf`);
+    }
 
     state.lastIssued = new Date().toLocaleDateString("ko-KR");
     lastIssued.textContent = state.lastIssued;
   } catch (error) {
     alert(error.message);
   } finally {
-    button.textContent = "파일 다운로드";
+    button.textContent = originalText;
     button.disabled = false;
   }
 });
+
+const downloadFile = (blob, filename) => {
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+};
 
 logoutButton.addEventListener("click", async () => {
   await fetchJson("/api/logout", { method: "POST" });
