@@ -367,13 +367,6 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
       .text(`발급일시: ${issuedAtText}`, stampX, qrY + qrSize + 8)
       .text(`문서번호: ${documentNumber}`, stampX, qrY + qrSize + 22);
 
-    doc
-      .fontSize(10)
-      .fillColor("#777")
-      .text("회사 내부 인증용 문서", 50, safeBottom - 18, {
-        align: "right",
-      });
-
     doc.restore();
     doc.end();
   } catch (error) {
