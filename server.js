@@ -1,8 +1,10 @@
 const express = require("express");
 const path = require("path");
 const session = require("express-session");
+const fs = require("fs");
 const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
+const { pool, initSchema, mapEmployee } = require("./db");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -23,35 +25,10 @@ app.use(
 
 app.use(express.static(path.join(__dirname, "public")));
 
-const employeeRecords = [
-  {
-    employeeId: "1001",
-    password: "1111",
-    name: "김하늘",
-    team: "HR",
-    joinDate: "2021-04-12",
-    retirementDate: "",
-    isAdmin: true,
-  },
-  {
-    employeeId: "1002",
-    password: "2222",
-    name: "이준서",
-    team: "재무",
-    joinDate: "2019-08-01",
-    retirementDate: "",
-    isAdmin: false,
-  },
-  {
-    employeeId: "1003",
-    password: "3333",
-    name: "박민지",
-    team: "개발",
-    joinDate: "2018-02-21",
-    retirementDate: "2024-12-31",
-    isAdmin: false,
-  },
-];
+initSchema().catch((error) => {
+  console.error("DB 초기화 실패", error);
+  process.exit(1);
+});
 
 const certificateLibrary = [
   {
@@ -90,23 +67,24 @@ const requireAdmin = (req, res, next) => {
 
 const sanitizeEmployee = ({ password, ...record }) => record;
 
-app.post("/api/login", (req, res) => {
+app.post("/api/login", async (req, res) => {
   const { employeeId, password } = req.body;
-  const employee = employeeRecords.find(
-    (record) => record.employeeId === employeeId && record.password === password
+  const { rows } = await pool.query(
+    `
+      SELECT employee_id, password, name, team, join_date, retirement_date, is_admin
+      FROM employees
+      WHERE employee_id = $1
+    `,
+    [employeeId]
   );
+  const employee = rows[0];
 
-  if (!employee) {
+  if (!employee || employee.password !== password) {
     return res.status(401).json({ message: "사번이 확인되지 않습니다." });
   }
 
   req.session.employee = {
-    employeeId: employee.employeeId,
-    name: employee.name,
-    team: employee.team,
-    joinDate: employee.joinDate,
-    retirementDate: employee.retirementDate,
-    isAdmin: employee.isAdmin,
+    ...mapEmployee(employee),
   };
   return res.json({ employee: req.session.employee });
 });
@@ -117,75 +95,108 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-app.get("/api/me", requireAuth, (req, res) => {
+app.get("/api/me", requireAuth, async (req, res) => {
+  if (!req.session.employee.isAdmin) {
+    return res.json({
+      employee: req.session.employee,
+      certificates: certificateLibrary,
+      employees: [],
+    });
+  }
+
+  const { rows } = await pool.query(
+    "SELECT employee_id, name, team, join_date, retirement_date, is_admin FROM employees"
+  );
   return res.json({
     employee: req.session.employee,
     certificates: certificateLibrary,
-    employees: req.session.employee.isAdmin
-      ? employeeRecords.map(sanitizeEmployee)
-      : [],
+    employees: rows.map(mapEmployee),
   });
 });
 
-app.get("/api/employees", requireAuth, requireAdmin, (req, res) => {
-  return res.json({ employees: employeeRecords.map(sanitizeEmployee) });
+app.get("/api/employees", requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query(
+    "SELECT employee_id, name, team, join_date, retirement_date, is_admin FROM employees"
+  );
+  return res.json({ employees: rows.map(mapEmployee) });
 });
 
-app.post("/api/employees", requireAuth, requireAdmin, (req, res) => {
+app.post("/api/employees", requireAuth, requireAdmin, async (req, res) => {
 
   const { employeeId, password, name, team, joinDate, retirementDate } = req.body;
   if (!employeeId || !password || !name || !team || !joinDate) {
     return res.status(400).json({ message: "필수 항목을 입력해주세요." });
   }
 
-  if (employeeRecords.some((record) => record.employeeId === employeeId)) {
+  const { rows: existing } = await pool.query(
+    "SELECT employee_id FROM employees WHERE employee_id = $1",
+    [employeeId]
+  );
+  if (existing.length > 0) {
     return res.status(409).json({ message: "이미 등록된 사번입니다." });
   }
 
-  const newRecord = {
-    employeeId,
-    password,
-    name,
-    team,
-    joinDate,
-    retirementDate: retirementDate || "",
-    isAdmin: false,
-  };
-  employeeRecords.push(newRecord);
+  const { rows } = await pool.query(
+    `
+      INSERT INTO employees
+        (employee_id, password, name, team, join_date, retirement_date, is_admin)
+      VALUES
+        ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING employee_id, name, team, join_date, retirement_date, is_admin
+    `,
+    [employeeId, password, name, team, joinDate, retirementDate || null, false]
+  );
 
-  return res.status(201).json({
-    employee: sanitizeEmployee(newRecord),
-  });
+  return res.status(201).json({ employee: mapEmployee(rows[0]) });
 });
 
-app.put("/api/employees/:id", requireAuth, requireAdmin, (req, res) => {
-  const record = employeeRecords.find(
-    (item) => item.employeeId === req.params.id
-  );
-  if (!record) {
-    return res.status(404).json({ message: "사원을 찾을 수 없습니다." });
-  }
-
+app.put("/api/employees/:id", requireAuth, requireAdmin, async (req, res) => {
   const { password, name, team, joinDate, retirementDate, isAdmin } = req.body;
-  record.password = password || record.password;
-  record.name = name || record.name;
-  record.team = team || record.team;
-  record.joinDate = joinDate || record.joinDate;
-  record.retirementDate = retirementDate ?? record.retirementDate;
-  record.isAdmin = typeof isAdmin === "boolean" ? isAdmin : record.isAdmin;
 
-  return res.json({ employee: sanitizeEmployee(record) });
-});
-
-app.delete("/api/employees/:id", requireAuth, requireAdmin, (req, res) => {
-  const index = employeeRecords.findIndex(
-    (item) => item.employeeId === req.params.id
+  const { rows: existing } = await pool.query(
+    "SELECT employee_id FROM employees WHERE employee_id = $1",
+    [req.params.id]
   );
-  if (index === -1) {
+  if (existing.length === 0) {
     return res.status(404).json({ message: "사원을 찾을 수 없습니다." });
   }
-  const [removed] = employeeRecords.splice(index, 1);
-  return res.json({ employee: sanitizeEmployee(removed) });
+
+  const { rows } = await pool.query(
+    `
+      UPDATE employees
+      SET
+        password = COALESCE($1, password),
+        name = COALESCE($2, name),
+        team = COALESCE($3, team),
+        join_date = COALESCE($4, join_date),
+        retirement_date = $5,
+        is_admin = COALESCE($6, is_admin)
+      WHERE employee_id = $7
+      RETURNING employee_id, name, team, join_date, retirement_date, is_admin
+    `,
+    [
+      password || null,
+      name || null,
+      team || null,
+      joinDate || null,
+      retirementDate === "" ? null : retirementDate ?? null,
+      typeof isAdmin === "boolean" ? isAdmin : null,
+      req.params.id,
+    ]
+  );
+
+  return res.json({ employee: mapEmployee(rows[0]) });
+});
+
+app.delete("/api/employees/:id", requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query(
+    "DELETE FROM employees WHERE employee_id = $1 RETURNING employee_id, name, team, join_date, retirement_date, is_admin",
+    [req.params.id]
+  );
+  if (rows.length === 0) {
+    return res.status(404).json({ message: "사원을 찾을 수 없습니다." });
+  }
+  return res.json({ employee: mapEmployee(rows[0]) });
 });
 
 app.get("/api/certificates/:id", requireAuth, async (req, res) => {
@@ -223,31 +234,63 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
     const doc = new PDFDocument({ margin: 50 });
     doc.pipe(res);
 
-    doc.fontSize(22).text(certificate.title, { align: "center" });
-    doc.moveDown();
+    const fontPath = path.join(
+      __dirname,
+      "assets",
+      "NotoSansKR-Regular.ttf"
+    );
+    if (fs.existsSync(fontPath)) {
+      doc.font(fontPath);
+    }
 
+    doc.fontSize(13).fillColor("#444").text("주식회사 캠스", {
+      align: "right",
+    });
+    doc.moveDown(0.2);
+    doc.fontSize(20).fillColor("#111").text(certificate.title, {
+      align: "center",
+    });
     doc
-      .fontSize(12)
-      .fillColor("#222")
-      .text(`발급 대상: ${req.session.employee.name}`)
-      .text(`소속팀: ${req.session.employee.team}`)
-      .text(`입사일자: ${req.session.employee.joinDate}`)
-      .text(
-        `퇴직일자: ${req.session.employee.retirementDate || "재직 중"}`
-      )
-      .text(`발급일시: ${issuedAtText}`)
-      .text(`문서번호: ${documentNumber}`);
+      .moveDown(0.6)
+      .lineWidth(1)
+      .strokeColor("#d4c8bb")
+      .moveTo(50, doc.y)
+      .lineTo(doc.page.width - 50, doc.y)
+      .stroke();
 
-    doc.moveDown(2);
+    doc.moveDown(1.2);
+    doc.fontSize(12).fillColor("#222");
+    const labelX = 70;
+    const valueX = 150;
+    const rowGap = 22;
+    let cursorY = doc.y;
+
+    const rows = [
+      ["성명", req.session.employee.name],
+      ["소속팀", req.session.employee.team],
+      ["입사일자", req.session.employee.joinDate],
+      ["퇴직일자", req.session.employee.retirementDate || "재직 중"],
+      ["발급일시", issuedAtText],
+      ["문서번호", documentNumber],
+    ];
+
+    rows.forEach(([label, value]) => {
+      doc.fontSize(11).fillColor("#666").text(label, labelX, cursorY);
+      doc.fontSize(12).fillColor("#222").text(value, valueX, cursorY);
+      cursorY += rowGap;
+    });
+
     doc
       .fontSize(10)
       .fillColor("#777")
-      .text("회사 내부 인증용 문서", { align: "right" });
+      .text("회사 내부 인증용 문서", 50, doc.page.height - 80, {
+        align: "right",
+      });
 
     const stampWidth = 220;
     const stampHeight = 70;
     const stampX = doc.page.width - stampWidth - 50;
-    const stampY = doc.page.height - 230;
+    const stampY = doc.page.height - 250;
 
     doc
       .save()
