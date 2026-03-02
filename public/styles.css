@@ -42,7 +42,29 @@ body {
   border-bottom-right-radius: 36px;
 }
 
+.hero__content {
+  display: grid;
+  gap: 14px;
+}
+
+.hero__brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.hero__logo {
+  width: 54px;
+  height: 54px;
+  object-fit: contain;
+  flex: 0 0 auto;
+  padding: 8px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .hero__label {
+  margin: 0;
   font-size: 0.85rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -52,7 +74,7 @@ body {
 .hero__title {
   font-family: "Nanum Myeongjo", serif;
   font-size: 2.2rem;
-  margin: 12px 0 8px;
+  margin: 4px 0 0;
 }
 
 .hero__subtitle {

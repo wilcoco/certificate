@@ -25,6 +25,7 @@ app.use(
 );
 
 app.use(express.static(path.join(__dirname, "public")));
+app.use("/assets", express.static(path.join(__dirname, "assets")));
 
 initSchema().catch((error) => {
   console.error("DB 초기화 실패", error);
@@ -298,10 +299,30 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
       doc.font(selectedFont);
     }
 
-    doc.fontSize(13).fillColor("#444").text("주식회사 캠스", {
-      align: "right",
-    });
-    doc.moveDown(0.2);
+    const logoCandidates = [
+      path.join(__dirname, "assets", "cams_tr2.png"),
+      path.join(__dirname, "assets", "cams_TR2.png"),
+    ];
+    const selectedLogo = logoCandidates.find((candidate) =>
+      fs.existsSync(candidate)
+    );
+
+    const headerTop = doc.page.margins.top;
+    const headerLeft = doc.page.margins.left;
+    const logoSize = 40;
+
+    if (selectedLogo) {
+      try {
+        doc.image(selectedLogo, headerLeft, headerTop - 4, { width: logoSize });
+      } catch (logoError) {}
+    }
+
+    const companyTextX = selectedLogo
+      ? headerLeft + logoSize + 10
+      : headerLeft;
+    doc.fontSize(13).fillColor("#444").text("(주)캠스", companyTextX, headerTop + 10);
+
+    doc.y = headerTop + (selectedLogo ? logoSize : 26) + 10;
     doc.fontSize(20).fillColor("#111").text(certificate.title, {
       align: "center",
     });
@@ -353,7 +374,7 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
       .stroke()
       .fontSize(12)
       .fillColor("#b4382d")
-      .text("주식회사 캠스", stampX + 12, stampY + 14)
+      .text("(주)캠스", stampX + 12, stampY + 14)
       .fontSize(13)
       .text("전자발급 확인", stampX + 12, stampY + 36);
 
@@ -390,14 +411,21 @@ app.get("/verify/:documentNumber", async (req, res) => {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="/styles.css" />
-  <title>문서 확인 실패</title>
+  <title>캠스 증명서 발급 - 문서 확인 실패</title>
 </head>
 <body>
   <div class="app">
     <header class="hero">
-      <div class="hero__label">Verification</div>
-      <h1 class="hero__title">전자발급 확인</h1>
-      <p class="hero__subtitle">문서를 찾을 수 없습니다.</p>
+      <div class="hero__content">
+        <div class="hero__brand">
+          <img class="hero__logo" src="/assets/cams_TR2.png" alt="CAMS 로고" />
+          <div>
+            <p class="hero__label">전자발급 확인</p>
+            <h1 class="hero__title">캠스 증명서 발급</h1>
+          </div>
+        </div>
+        <p class="hero__subtitle">문서를 찾을 수 없습니다.</p>
+      </div>
     </header>
     <main class="main">
       <section class="card">
@@ -452,14 +480,21 @@ app.get("/verify/:documentNumber", async (req, res) => {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="/styles.css" />
-  <title>전자발급 확인 - ${escapeHtml(certificateTitle)}</title>
+  <title>캠스 증명서 발급 - ${escapeHtml(certificateTitle)}</title>
 </head>
 <body>
   <div class="app">
     <header class="hero">
-      <div class="hero__label">Verification</div>
-      <h1 class="hero__title">전자발급 확인</h1>
-      <p class="hero__subtitle">QR 코드로 확인된 문서입니다.</p>
+      <div class="hero__content">
+        <div class="hero__brand">
+          <img class="hero__logo" src="/assets/cams_TR2.png" alt="CAMS 로고" />
+          <div>
+            <p class="hero__label">전자발급 확인</p>
+            <h1 class="hero__title">캠스 증명서 발급</h1>
+          </div>
+        </div>
+        <p class="hero__subtitle">QR 코드로 확인된 문서입니다.</p>
+      </div>
     </header>
     <main class="main">
       <section class="card">
@@ -482,14 +517,21 @@ app.get("/verify/:documentNumber", async (req, res) => {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="/styles.css" />
-  <title>문서 확인 오류</title>
+  <title>캠스 증명서 발급 - 문서 확인 오류</title>
 </head>
 <body>
   <div class="app">
     <header class="hero">
-      <div class="hero__label">Verification</div>
-      <h1 class="hero__title">전자발급 확인</h1>
-      <p class="hero__subtitle">잠시 후 다시 시도해주세요.</p>
+      <div class="hero__content">
+        <div class="hero__brand">
+          <img class="hero__logo" src="/assets/cams_TR2.png" alt="CAMS 로고" />
+          <div>
+            <p class="hero__label">전자발급 확인</p>
+            <h1 class="hero__title">캠스 증명서 발급</h1>
+          </div>
+        </div>
+        <p class="hero__subtitle">잠시 후 다시 시도해주세요.</p>
+      </div>
     </header>
     <main class="main">
       <section class="card">
