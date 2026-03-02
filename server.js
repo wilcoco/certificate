@@ -7,6 +7,7 @@ const QRCode = require("qrcode");
 const { pool, initSchema, mapEmployee } = require("./db");
 
 const app = express();
+app.set("trust proxy", 1);
 const PORT = process.env.PORT || 3001;
 
 app.use(express.json());
@@ -66,6 +67,15 @@ const requireAdmin = (req, res, next) => {
 };
 
 const sanitizeEmployee = ({ password, ...record }) => record;
+
+const escapeHtml = (value) => {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+};
 
 app.post("/api/login", async (req, res) => {
   const { employeeId, password } = req.body;
@@ -207,29 +217,59 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
   }
 
   try {
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${certificate.filename}"`
-    );
-
     const issuedAt = new Date();
     const issuedAtText = issuedAt.toLocaleString("ko-KR");
     const documentNumber = `${certificate.id.toUpperCase()}-${
       req.session.employee.employeeId
     }-${issuedAt.getTime().toString().slice(-6)}`;
 
-    const qrPayload = JSON.stringify({
+    const baseUrl = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`)
+      .replace(/\/$/, "");
+    const verifyUrl = `${baseUrl}/verify/${encodeURIComponent(documentNumber)}`;
+
+    const issuePayload = {
       documentNumber,
+      certificateId: certificate.id,
+      certificateTitle: certificate.title,
       issuedAt: issuedAt.toISOString(),
-      employeeId: req.session.employee.employeeId,
-      certificate: certificate.id,
-    });
-    const qrDataUrl = await QRCode.toDataURL(qrPayload, {
+      issuedAtText,
+      employee: {
+        employeeId: req.session.employee.employeeId,
+        name: req.session.employee.name,
+        team: req.session.employee.team,
+        joinDate: req.session.employee.joinDate,
+        retirementDate: req.session.employee.retirementDate || "",
+      },
+    };
+
+    await pool.query(
+      `
+        INSERT INTO certificate_issues
+          (document_number, certificate_id, employee_id, issued_at, payload)
+        VALUES
+          ($1, $2, $3, $4, $5)
+        ON CONFLICT (document_number) DO NOTHING
+      `,
+      [
+        documentNumber,
+        certificate.id,
+        req.session.employee.employeeId,
+        issuedAt.toISOString(),
+        issuePayload,
+      ]
+    );
+
+    const qrDataUrl = await QRCode.toDataURL(verifyUrl, {
       margin: 1,
       width: 180,
     });
     const qrImage = Buffer.from(qrDataUrl.split(",")[1], "base64");
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${certificate.filename}"`
+    );
 
     const doc = new PDFDocument({ margin: 50 });
     doc.pipe(res);
@@ -295,17 +335,15 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
       cursorY += rowGap;
     });
 
-    doc
-      .fontSize(10)
-      .fillColor("#777")
-      .text("회사 내부 인증용 문서", 50, doc.page.height - 80, {
-        align: "right",
-      });
-
     const stampWidth = 220;
     const stampHeight = 70;
     const stampX = doc.page.width - stampWidth - 50;
-    const stampY = doc.page.height - 250;
+    const safeBottom = doc.page.height - doc.page.margins.bottom;
+    const stampPaddingBottom = 14;
+    const qrSize = 110;
+    const issueInfoHeight = 44;
+    const stampBlockHeight = stampHeight + stampPaddingBottom + qrSize + issueInfoHeight;
+    const stampY = safeBottom - stampBlockHeight;
 
     doc
       .save()
@@ -319,9 +357,8 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
       .fontSize(13)
       .text("전자발급 확인", stampX + 12, stampY + 36);
 
-    const qrSize = 110;
     const qrX = stampX + stampWidth - qrSize;
-    const qrY = stampY + stampHeight + 14;
+    const qrY = stampY + stampHeight + stampPaddingBottom;
     doc.image(qrImage, qrX, qrY, { width: qrSize });
 
     doc
@@ -330,10 +367,146 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
       .text(`발급일시: ${issuedAtText}`, stampX, qrY + qrSize + 8)
       .text(`문서번호: ${documentNumber}`, stampX, qrY + qrSize + 22);
 
+    doc
+      .fontSize(10)
+      .fillColor("#777")
+      .text("회사 내부 인증용 문서", 50, safeBottom - 18, {
+        align: "right",
+      });
+
     doc.restore();
     doc.end();
   } catch (error) {
     res.status(500).json({ message: "PDF 생성에 실패했습니다." });
+  }
+});
+
+app.get("/verify/:documentNumber", async (req, res) => {
+  const documentNumber = req.params.documentNumber;
+
+  try {
+    const { rows } = await pool.query(
+      "SELECT document_number, certificate_id, issued_at, payload FROM certificate_issues WHERE document_number = $1",
+      [documentNumber]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).send(`<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/styles.css" />
+  <title>문서 확인 실패</title>
+</head>
+<body>
+  <div class="app">
+    <header class="hero">
+      <div class="hero__label">Verification</div>
+      <h1 class="hero__title">전자발급 확인</h1>
+      <p class="hero__subtitle">문서를 찾을 수 없습니다.</p>
+    </header>
+    <main class="main">
+      <section class="card">
+        <h2>문서 조회 실패</h2>
+        <p class="muted">문서번호: ${escapeHtml(documentNumber)}</p>
+        <p class="helper">QR 코드가 최신 문서인지 확인해주세요.</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>`);
+    }
+
+    const issue = rows[0];
+    const payload =
+      issue.payload && typeof issue.payload === "string"
+        ? JSON.parse(issue.payload)
+        : issue.payload;
+
+    const certificate = certificateLibrary.find(
+      (item) => item.id === (payload?.certificateId || issue.certificate_id)
+    );
+
+    const certificateTitle =
+      certificate?.title || payload?.certificateTitle || "증명서";
+    const issuedAtText =
+      payload?.issuedAtText || new Date(issue.issued_at).toLocaleString("ko-KR");
+    const employee = payload?.employee || {};
+
+    const verificationRows = [
+      ["성명", employee.name],
+      ["소속팀", employee.team],
+      ["입사일자", employee.joinDate],
+      ["퇴직일자", employee.retirementDate || "재직 중"],
+      ["발급일시", issuedAtText],
+      ["문서번호", payload?.documentNumber || issue.document_number],
+    ];
+
+    const statusBlocks = verificationRows
+      .map(
+        ([label, value]) => `
+        <div>
+          <p class="status__label">${escapeHtml(label)}</p>
+          <div>${escapeHtml(value || "-")}</div>
+        </div>`
+      )
+      .join("");
+
+    return res.status(200).send(`<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/styles.css" />
+  <title>전자발급 확인 - ${escapeHtml(certificateTitle)}</title>
+</head>
+<body>
+  <div class="app">
+    <header class="hero">
+      <div class="hero__label">Verification</div>
+      <h1 class="hero__title">전자발급 확인</h1>
+      <p class="hero__subtitle">QR 코드로 확인된 문서입니다.</p>
+    </header>
+    <main class="main">
+      <section class="card">
+        <h2>${escapeHtml(certificateTitle)}</h2>
+        <p class="muted">문서번호: ${escapeHtml(payload?.documentNumber || issue.document_number)}</p>
+        <div class="status">
+          ${statusBlocks}
+        </div>
+        <p class="helper">이 페이지는 발급 시점의 정보를 기준으로 표시됩니다.</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>`);
+  } catch (error) {
+    console.error("문서 확인 실패", error);
+    return res.status(500).send(`<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/styles.css" />
+  <title>문서 확인 오류</title>
+</head>
+<body>
+  <div class="app">
+    <header class="hero">
+      <div class="hero__label">Verification</div>
+      <h1 class="hero__title">전자발급 확인</h1>
+      <p class="hero__subtitle">잠시 후 다시 시도해주세요.</p>
+    </header>
+    <main class="main">
+      <section class="card">
+        <h2>서버 오류</h2>
+        <p class="muted">문서번호: ${escapeHtml(documentNumber)}</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>`);
   }
 });
 

@@ -13,6 +13,7 @@ if (isDevelopment && !connectionString) {
   // 간단한 인메모리 데이터베이스 구현
   const memoryDB = {
     employees: [],
+    certificate_issues: [],
     query: async (text, params) => {
       console.log("Query:", text, params);
       
@@ -21,10 +22,24 @@ if (isDevelopment && !connectionString) {
       }
       
       if (text.includes("SELECT COUNT(*)")) {
+        if (text.includes("FROM certificate_issues")) {
+          return { rows: [{ count: memoryDB.certificate_issues.length }] };
+        }
         return { rows: [{ count: memoryDB.employees.length }] };
       }
       
       if (text.includes("SELECT")) {
+        if (text.includes("FROM certificate_issues")) {
+          if (text.includes("WHERE document_number =")) {
+            const documentNumber = params[0];
+            const issue = memoryDB.certificate_issues.find(
+              (item) => item.document_number === documentNumber
+            );
+            return { rows: issue ? [issue] : [] };
+          }
+          return { rows: memoryDB.certificate_issues };
+        }
+
         if (text.includes("WHERE employee_id =")) {
           const employeeId = params[0];
           const employee = memoryDB.employees.find(emp => emp.employee_id === employeeId);
@@ -34,20 +49,46 @@ if (isDevelopment && !connectionString) {
       }
       
       if (text.includes("INSERT")) {
-        const newEmployee = {
-          employee_id: params[0],
-          password: params[1],
-          name: params[2],
-          team: params[3],
-          join_date: params[4],
-          retirement_date: params[5],
-          is_admin: params[6]
-        };
-        memoryDB.employees.push(newEmployee);
-        return { rows: [newEmployee] };
+        if (text.includes("INSERT INTO certificate_issues")) {
+          const newIssue = {
+            document_number: params[0],
+            certificate_id: params[1],
+            employee_id: params[2],
+            issued_at: params[3],
+            payload:
+              typeof params[4] === "string" ? JSON.parse(params[4]) : params[4],
+          };
+
+          const existing = memoryDB.certificate_issues.find(
+            (item) => item.document_number === newIssue.document_number
+          );
+          if (!existing) {
+            memoryDB.certificate_issues.push(newIssue);
+          }
+          return { rows: [newIssue] };
+        }
+
+        if (text.includes("INSERT INTO employees")) {
+          const newEmployee = {
+            employee_id: params[0],
+            password: params[1],
+            name: params[2],
+            team: params[3],
+            join_date: params[4],
+            retirement_date: params[5],
+            is_admin: params[6]
+          };
+          memoryDB.employees.push(newEmployee);
+          return { rows: [newEmployee] };
+        }
+
+        return { rows: [] };
       }
       
       if (text.includes("UPDATE")) {
+        if (!text.includes("UPDATE employees")) {
+          return { rows: [] };
+        }
         const employeeId = params[6];
         const index = memoryDB.employees.findIndex(emp => emp.employee_id === employeeId);
         if (index !== -1) {
@@ -66,6 +107,9 @@ if (isDevelopment && !connectionString) {
       }
       
       if (text.includes("DELETE")) {
+        if (!text.includes("DELETE FROM employees")) {
+          return { rows: [] };
+        }
         const employeeId = params[0];
         const index = memoryDB.employees.findIndex(emp => emp.employee_id === employeeId);
         if (index !== -1) {
@@ -148,6 +192,16 @@ const initSchema = async () => {
       join_date DATE NOT NULL,
       retirement_date DATE,
       is_admin BOOLEAN DEFAULT FALSE
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS certificate_issues (
+      document_number TEXT PRIMARY KEY,
+      certificate_id TEXT NOT NULL,
+      employee_id TEXT NOT NULL,
+      issued_at TIMESTAMPTZ NOT NULL,
+      payload JSONB NOT NULL
     )
   `);
 
