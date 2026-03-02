@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>사내 문서 발급 포털</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Nanum+Myeongjo:wght@400;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="app">
+      <header class="hero">
+        <div class="hero__content">
+          <p class="hero__label">모바일 인증 · 실시간 발급</p>
+          <h1 class="hero__title">사내 문서 발급 포털</h1>
+          <p class="hero__subtitle">
+            사번 로그인 후 재직/경력 증명서를 안전하게 내려받으세요.
+          </p>
+        </div>
+      </header>
+
+      <main class="main">
+        <section class="card login" id="login-card">
+          <h2>사번 로그인</h2>
+          <p class="muted">모바일 전용 간편 인증</p>
+          <form id="login-form">
+            <label for="employeeId">사번</label>
+            <input
+              id="employeeId"
+              name="employeeId"
+              type="text"
+              placeholder="예: 1001"
+              required
+              inputmode="numeric"
+            />
+            <label for="password">비밀번호</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              placeholder="비밀번호 입력"
+              required
+            />
+            <button type="submit" class="primary">로그인</button>
+            <p class="helper">데모: 1001/1111, 1002/2222, 1003/3333</p>
+          </form>
+          <p class="error" id="login-error"></p>
+        </section>
+
+        <section class="card dashboard hidden" id="dashboard">
+          <div class="dashboard__header">
+            <div>
+              <h2 id="employee-name">홍길동님</h2>
+              <p class="muted" id="employee-meta">부서 · 직무</p>
+            </div>
+            <button class="ghost" id="logout-button">로그아웃</button>
+          </div>
+          <p class="badge hidden" id="admin-badge">관리자 모드</p>
+
+          <div class="status">
+            <div>
+              <p class="status__label">최근 발급</p>
+              <h3 id="last-issued">-</h3>
+            </div>
+            <div>
+              <p class="status__label">문서 보관함</p>
+              <h3 id="doc-count">0건</h3>
+            </div>
+          </div>
+
+          <div class="certificates" id="certificate-list"></div>
+        </section>
+
+        <section class="card hidden" id="employee-admin">
+          <h2>사원 정보 입력</h2>
+          <p class="muted">입사일자 · 소속팀 · 퇴직일자를 관리합니다.</p>
+          <form id="employee-form" class="grid-form">
+            <div>
+              <label for="newEmployeeId">사번</label>
+              <input id="newEmployeeId" name="employeeId" type="text" required />
+            </div>
+            <div>
+              <label for="newPassword">비밀번호</label>
+              <input id="newPassword" name="password" type="password" required />
+            </div>
+            <div>
+              <label for="newName">이름</label>
+              <input id="newName" name="name" type="text" required />
+            </div>
+            <div>
+              <label for="newTeam">소속팀</label>
+              <input id="newTeam" name="team" type="text" required />
+            </div>
+            <div>
+              <label for="newJoinDate">입사일자</label>
+              <input id="newJoinDate" name="joinDate" type="date" required />
+            </div>
+            <div>
+              <label for="newRetirementDate">퇴직일자</label>
+              <input id="newRetirementDate" name="retirementDate" type="date" />
+            </div>
+            <button type="submit" class="primary">사원 추가</button>
+          </form>
+          <p class="error" id="employee-error"></p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>사번</th>
+                  <th>이름</th>
+                  <th>소속팀</th>
+                  <th>입사일자</th>
+                  <th>퇴직일자</th>
+                  <th>관리</th>
+                </tr>
+              </thead>
+              <tbody id="employee-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
