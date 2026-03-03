@@ -134,6 +134,7 @@ app.post("/api/login", async (req, res) => {
 
   req.session.employee = {
     ...mapEmployee(employee),
+    employeeId: normalizeString(employee.employee_id),
   };
   return res.json({ employee: req.session.employee });
 });
