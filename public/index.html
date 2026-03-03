@@ -45,7 +45,7 @@
               placeholder="예: 1001"
               required
               inputmode="numeric"
-              pattern="[0-9]+"
+              pattern="\s*[0-9]+\s*"
               autocomplete="username"
               autocorrect="off"
               autocapitalize="off"
@@ -106,7 +106,7 @@
           <form id="employee-form" class="grid-form">
             <div>
               <label for="newEmployeeId">사번</label>
-              <input id="newEmployeeId" name="employeeId" type="text" required />
+              <input id="newEmployeeId" name="employeeId" type="text" required inputmode="numeric" pattern="\s*[0-9]+\s*" />
             </div>
             <div>
               <label for="newPassword">비밀번호</label>

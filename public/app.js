@@ -169,8 +169,8 @@ loginForm.addEventListener("submit", async (event) => {
   loginError.textContent = "";
 
   const formData = new FormData(loginForm);
-  const employeeId = formData.get("employeeId");
-  const password = formData.get("password");
+  const employeeId = String(formData.get("employeeId") || "").trim();
+  const password = String(formData.get("password") || "").trim();
 
   try {
     const data = await fetchJson("/api/login", {
@@ -199,6 +199,11 @@ employeeForm.addEventListener("submit", async (event) => {
 
   const formData = new FormData(employeeForm);
   const payload = Object.fromEntries(formData.entries());
+  Object.keys(payload).forEach((key) => {
+    if (typeof payload[key] === "string") {
+      payload[key] = payload[key].trim();
+    }
+  });
   const editingId = employeeForm.dataset.editing;
 
   try {

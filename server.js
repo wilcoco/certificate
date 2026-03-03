@@ -78,6 +78,8 @@ const escapeHtml = (value) => {
     .replace(/'/g, "&#039;");
 };
 
+const normalizeString = (value) => String(value ?? "").trim();
+
 const parseMaskResidentNumber = (value) => {
   if (value === undefined || value === null || value === "") return true;
   const lowered = String(value).toLowerCase();
@@ -98,7 +100,12 @@ const maskResidentNumber = (value) => {
 };
 
 app.post("/api/login", async (req, res) => {
-  const { employeeId, password } = req.body;
+  const employeeId = normalizeString(req.body?.employeeId);
+  const password = normalizeString(req.body?.password);
+
+  if (!employeeId || !password) {
+    return res.status(400).json({ message: "사번과 비밀번호를 입력해주세요." });
+  }
   const { rows } = await pool.query(
     `
       SELECT employee_id, password, name, team, join_date, retirement_date, is_admin, address, resident_number
@@ -107,10 +114,22 @@ app.post("/api/login", async (req, res) => {
     `,
     [employeeId]
   );
-  const employee = rows[0];
+  let employee = rows[0];
 
-  if (!employee || employee.password !== password) {
-    return res.status(401).json({ message: "사번이 확인되지 않습니다." });
+  if (!employee) {
+    const { rows: maybeMatches } = await pool.query(
+      "SELECT employee_id, password, name, team, join_date, retirement_date, is_admin, address, resident_number FROM employees WHERE TRIM(employee_id) = $1",
+      [employeeId]
+    );
+    employee = maybeMatches.find(
+      (record) => normalizeString(record.employee_id) === employeeId
+    );
+  }
+
+  if (!employee || normalizeString(employee.password) !== password) {
+    return res
+      .status(401)
+      .json({ message: "사번 또는 비밀번호가 올바르지 않습니다." });
   }
 
   req.session.employee = {
@@ -163,15 +182,36 @@ app.post("/api/employees", requireAuth, requireAdmin, async (req, res) => {
     address,
     residentNumber,
   } = req.body;
-  if (!employeeId || !password || !name || !team || !joinDate) {
+
+  const employeeIdValue = normalizeString(employeeId);
+  const passwordValue = normalizeString(password);
+  const nameValue = normalizeString(name);
+  const teamValue = normalizeString(team);
+  const joinDateValue = normalizeString(joinDate);
+  const retirementDateValue = normalizeString(retirementDate);
+  const addressValue = normalizeString(address);
+  const residentNumberValue = normalizeString(residentNumber);
+
+  if (!employeeIdValue || !passwordValue || !nameValue || !teamValue || !joinDateValue) {
     return res.status(400).json({ message: "필수 항목을 입력해주세요." });
   }
 
   const { rows: existing } = await pool.query(
     "SELECT employee_id FROM employees WHERE employee_id = $1",
-    [employeeId]
+    [employeeIdValue]
   );
   if (existing.length > 0) {
+    return res.status(409).json({ message: "이미 등록된 사번입니다." });
+  }
+
+  const { rows: existingTrimmed } = await pool.query(
+    "SELECT employee_id FROM employees WHERE TRIM(employee_id) = $1",
+    [employeeIdValue]
+  );
+  const hasTrimmedConflict = existingTrimmed.some(
+    (record) => normalizeString(record.employee_id) === employeeIdValue
+  );
+  if (hasTrimmedConflict) {
     return res.status(409).json({ message: "이미 등록된 사번입니다." });
   }
 
@@ -184,15 +224,15 @@ app.post("/api/employees", requireAuth, requireAdmin, async (req, res) => {
       RETURNING employee_id, name, team, join_date, retirement_date, is_admin, address, resident_number
     `,
     [
-      employeeId,
-      password,
-      name,
-      team,
-      joinDate,
-      retirementDate || null,
+      employeeIdValue,
+      passwordValue,
+      nameValue,
+      teamValue,
+      joinDateValue,
+      retirementDateValue || null,
       false,
-      address || null,
-      residentNumber || null,
+      addressValue || null,
+      residentNumberValue || null,
     ]
   );
 
@@ -211,8 +251,18 @@ app.put("/api/employees/:id", requireAuth, requireAdmin, async (req, res) => {
     residentNumber,
   } = req.body;
 
-  const addressValue = address === undefined ? null : address;
-  const residentNumberValue = residentNumber === undefined ? null : residentNumber;
+  const passwordValue = password === undefined ? null : normalizeString(password) || null;
+  const nameValue = name === undefined ? null : normalizeString(name) || null;
+  const teamValue = team === undefined ? null : normalizeString(team) || null;
+  const joinDateValue = joinDate === undefined ? null : normalizeString(joinDate) || null;
+  const retirementDateValue =
+    retirementDate === undefined ? null : normalizeString(retirementDate);
+  const addressValue =
+    address === undefined || address === null ? null : normalizeString(address);
+  const residentNumberValue =
+    residentNumber === undefined || residentNumber === null
+      ? null
+      : normalizeString(residentNumber);
 
   const { rows: existing } = await pool.query(
     "SELECT employee_id FROM employees WHERE employee_id = $1",
@@ -238,11 +288,11 @@ app.put("/api/employees/:id", requireAuth, requireAdmin, async (req, res) => {
       RETURNING employee_id, name, team, join_date, retirement_date, is_admin, address, resident_number
     `,
     [
-      password || null,
-      name || null,
-      team || null,
-      joinDate || null,
-      retirementDate === "" ? null : retirementDate ?? null,
+      passwordValue,
+      nameValue,
+      teamValue,
+      joinDateValue,
+      retirementDateValue === "" ? null : retirementDateValue ?? null,
       typeof isAdmin === "boolean" ? isAdmin : null,
       addressValue,
       residentNumberValue,
