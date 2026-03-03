@@ -231,6 +231,18 @@ button.ghost:focus {
   color: var(--muted);
 }
 
+.option-row {
+  margin-top: 12px;
+}
+
+.option-row__label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .certificates {
   display: grid;
   gap: 16px;

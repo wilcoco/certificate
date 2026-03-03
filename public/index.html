@@ -90,6 +90,13 @@
             </div>
           </div>
 
+          <div class="option-row">
+            <label class="option-row__label">
+              <input id="mask-resident-number" type="checkbox" checked />
+              주민등록번호 뒷자리 마스킹(검증 페이지)
+            </label>
+          </div>
+
           <div class="certificates" id="certificate-list"></div>
         </section>
 
@@ -114,6 +121,14 @@
               <input id="newTeam" name="team" type="text" required />
             </div>
             <div>
+              <label for="newAddress">주소</label>
+              <input id="newAddress" name="address" type="text" />
+            </div>
+            <div>
+              <label for="newResidentNumber">주민등록번호</label>
+              <input id="newResidentNumber" name="residentNumber" type="text" placeholder="000000-0000000" />
+            </div>
+            <div>
               <label for="newJoinDate">입사일자</label>
               <input id="newJoinDate" name="joinDate" type="date" required />
             </div>
@@ -132,6 +147,8 @@
                   <th>사번</th>
                   <th>이름</th>
                   <th>소속팀</th>
+                  <th>주소</th>
+                  <th>주민등록번호</th>
                   <th>입사일자</th>
                   <th>퇴직일자</th>
                   <th>관리</th>

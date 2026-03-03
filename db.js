@@ -76,7 +76,9 @@ if (isDevelopment && !connectionString) {
             team: params[3],
             join_date: params[4],
             retirement_date: params[5],
-            is_admin: params[6]
+            is_admin: params[6],
+            address: params[7],
+            resident_number: params[8],
           };
           memoryDB.employees.push(newEmployee);
           return { rows: [newEmployee] };
@@ -89,7 +91,7 @@ if (isDevelopment && !connectionString) {
         if (!text.includes("UPDATE employees")) {
           return { rows: [] };
         }
-        const employeeId = params[6];
+        const employeeId = params[8];
         const index = memoryDB.employees.findIndex(emp => emp.employee_id === employeeId);
         if (index !== -1) {
           memoryDB.employees[index] = {
@@ -99,7 +101,9 @@ if (isDevelopment && !connectionString) {
             team: params[2] || memoryDB.employees[index].team,
             join_date: params[3] || memoryDB.employees[index].join_date,
             retirement_date: params[4],
-            is_admin: params[5] !== null ? params[5] : memoryDB.employees[index].is_admin
+            is_admin: params[5] !== null ? params[5] : memoryDB.employees[index].is_admin,
+            address: params[6] ?? memoryDB.employees[index].address,
+            resident_number: params[7] ?? memoryDB.employees[index].resident_number,
           };
           return { rows: [memoryDB.employees[index]] };
         }
@@ -144,6 +148,8 @@ const seedEmployees = [
     joinDate: "2021-04-12",
     retirementDate: null,
     isAdmin: true,
+    address: "",
+    residentNumber: "",
   },
   {
     employeeId: "1002",
@@ -153,6 +159,8 @@ const seedEmployees = [
     joinDate: "2019-08-01",
     retirementDate: null,
     isAdmin: false,
+    address: "",
+    residentNumber: "",
   },
   {
     employeeId: "1003",
@@ -162,6 +170,8 @@ const seedEmployees = [
     joinDate: "2018-02-21",
     retirementDate: "2024-12-31",
     isAdmin: false,
+    address: "",
+    residentNumber: "",
   },
 ];
 
@@ -176,7 +186,9 @@ const initSchema = async () => {
         team: employee.team,
         join_date: employee.joinDate,
         retirement_date: employee.retirementDate,
-        is_admin: employee.isAdmin
+        is_admin: employee.isAdmin,
+        address: employee.address,
+        resident_number: employee.residentNumber,
       });
     });
     console.log("시드 데이터가 추가되었습니다.");
@@ -191,9 +203,16 @@ const initSchema = async () => {
       team TEXT NOT NULL,
       join_date DATE NOT NULL,
       retirement_date DATE,
-      is_admin BOOLEAN DEFAULT FALSE
+      is_admin BOOLEAN DEFAULT FALSE,
+      address TEXT,
+      resident_number TEXT
     )
   `);
+
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS address TEXT`);
+  await pool.query(
+    `ALTER TABLE employees ADD COLUMN IF NOT EXISTS resident_number TEXT`
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS certificate_issues (
@@ -209,9 +228,9 @@ const initSchema = async () => {
   if (rows[0].count === 0) {
     const insertText = `
       INSERT INTO employees
-        (employee_id, password, name, team, join_date, retirement_date, is_admin)
+        (employee_id, password, name, team, join_date, retirement_date, is_admin, address, resident_number)
       VALUES
-        ($1, $2, $3, $4, $5, $6, $7)
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       ON CONFLICT (employee_id) DO NOTHING
     `;
     for (const employee of seedEmployees) {
@@ -223,6 +242,8 @@ const initSchema = async () => {
         employee.joinDate,
         employee.retirementDate,
         employee.isAdmin,
+        employee.address || null,
+        employee.residentNumber || null,
       ]);
     }
   }
@@ -232,6 +253,8 @@ const mapEmployee = (row) => ({
   employeeId: row.employee_id,
   name: row.name,
   team: row.team,
+  address: row.address || "",
+  residentNumber: row.resident_number || "",
   joinDate: row.join_date instanceof Date
     ? row.join_date.toISOString().slice(0, 10)
     : row.join_date,

@@ -13,6 +13,7 @@ const employeeForm = document.getElementById("employee-form");
 const employeeError = document.getElementById("employee-error");
 const employeeTable = document.getElementById("employee-table");
 const adminBadge = document.getElementById("admin-badge");
+const maskResidentNumberToggle = document.getElementById("mask-resident-number");
 
 const state = {
   employee: null,
@@ -55,7 +56,7 @@ const renderDashboard = () => {
   dashboard.classList.remove("hidden");
 
   employeeName.textContent = `${state.employee.name}님`;
-  employeeMeta.textContent = `${state.employee.department} · ${state.employee.role}`;
+  employeeMeta.textContent = state.employee.team || "";
 
   certificateList.innerHTML = "";
   state.certificates.forEach((cert) => {
@@ -85,6 +86,8 @@ const renderEmployees = () => {
       <td>${record.employeeId}</td>
       <td>${record.name}</td>
       <td>${record.team}</td>
+      <td>${record.address || "-"}</td>
+      <td>${record.residentNumber || "-"}</td>
       <td>${record.joinDate}</td>
       <td>${record.retirementDate || "-"}</td>
       <td>
@@ -253,11 +256,16 @@ employeeTable.addEventListener("click", async (event) => {
     employeeForm.password.value = "";
     employeeForm.name.value = record.name;
     employeeForm.team.value = record.team;
+    employeeForm.address.value = record.address || "";
+    employeeForm.residentNumber.value = record.residentNumber || "";
     employeeForm.joinDate.value = record.joinDate;
     employeeForm.retirementDate.value = record.retirementDate || "";
 
     employeeForm.dataset.editing = id;
     employeeForm.querySelector("button").textContent = "사원 수정";
+
+    document.getElementById("newEmployeeId").disabled = true;
+    document.getElementById("newPassword").required = false;
     
     // 모바일에서 폼 위치로 스크롤
     employeeForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -268,6 +276,9 @@ employeeForm.addEventListener("reset", () => {
   employeeForm.dataset.editing = "";
   const button = employeeForm.querySelector("button");
   if (button) button.textContent = "사원 추가";
+
+  document.getElementById("newEmployeeId").disabled = false;
+  document.getElementById("newPassword").required = true;
 });
 
 certificateList.addEventListener("click", async (event) => {
@@ -280,7 +291,10 @@ certificateList.addEventListener("click", async (event) => {
   button.disabled = true;
 
   try {
-    const response = await fetch(`/api/certificates/${id}`);
+    const maskResidentNumber = maskResidentNumberToggle?.checked ? "1" : "0";
+    const response = await fetch(
+      `/api/certificates/${id}?maskResidentNumber=${encodeURIComponent(maskResidentNumber)}`
+    );
     if (!response.ok) {
       const data = await response.json();
       throw new Error(data.message || "다운로드 실패");

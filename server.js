@@ -78,11 +78,30 @@ const escapeHtml = (value) => {
     .replace(/'/g, "&#039;");
 };
 
+const parseMaskResidentNumber = (value) => {
+  if (value === undefined || value === null || value === "") return true;
+  const lowered = String(value).toLowerCase();
+  if (["0", "false", "no", "off"].includes(lowered)) return false;
+  return true;
+};
+
+const maskResidentNumber = (value) => {
+  const input = String(value || "").trim();
+  if (!input) return "";
+  const digits = input.replace(/[^0-9]/g, "");
+  if (digits.length < 7) return input;
+
+  const front = digits.slice(0, 6);
+  const backFirst = digits.slice(6, 7);
+  const maskLength = Math.max(0, digits.length - 7);
+  return `${front}-${backFirst}${"*".repeat(maskLength)}`;
+};
+
 app.post("/api/login", async (req, res) => {
   const { employeeId, password } = req.body;
   const { rows } = await pool.query(
     `
-      SELECT employee_id, password, name, team, join_date, retirement_date, is_admin
+      SELECT employee_id, password, name, team, join_date, retirement_date, is_admin, address, resident_number
       FROM employees
       WHERE employee_id = $1
     `,
@@ -116,7 +135,7 @@ app.get("/api/me", requireAuth, async (req, res) => {
   }
 
   const { rows } = await pool.query(
-    "SELECT employee_id, name, team, join_date, retirement_date, is_admin FROM employees"
+    "SELECT employee_id, name, team, join_date, retirement_date, is_admin, address, resident_number FROM employees"
   );
   return res.json({
     employee: req.session.employee,
@@ -127,14 +146,23 @@ app.get("/api/me", requireAuth, async (req, res) => {
 
 app.get("/api/employees", requireAuth, requireAdmin, async (req, res) => {
   const { rows } = await pool.query(
-    "SELECT employee_id, name, team, join_date, retirement_date, is_admin FROM employees"
+    "SELECT employee_id, name, team, join_date, retirement_date, is_admin, address, resident_number FROM employees"
   );
   return res.json({ employees: rows.map(mapEmployee) });
 });
 
 app.post("/api/employees", requireAuth, requireAdmin, async (req, res) => {
 
-  const { employeeId, password, name, team, joinDate, retirementDate } = req.body;
+  const {
+    employeeId,
+    password,
+    name,
+    team,
+    joinDate,
+    retirementDate,
+    address,
+    residentNumber,
+  } = req.body;
   if (!employeeId || !password || !name || !team || !joinDate) {
     return res.status(400).json({ message: "필수 항목을 입력해주세요." });
   }
@@ -150,19 +178,41 @@ app.post("/api/employees", requireAuth, requireAdmin, async (req, res) => {
   const { rows } = await pool.query(
     `
       INSERT INTO employees
-        (employee_id, password, name, team, join_date, retirement_date, is_admin)
+        (employee_id, password, name, team, join_date, retirement_date, is_admin, address, resident_number)
       VALUES
-        ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING employee_id, name, team, join_date, retirement_date, is_admin
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING employee_id, name, team, join_date, retirement_date, is_admin, address, resident_number
     `,
-    [employeeId, password, name, team, joinDate, retirementDate || null, false]
+    [
+      employeeId,
+      password,
+      name,
+      team,
+      joinDate,
+      retirementDate || null,
+      false,
+      address || null,
+      residentNumber || null,
+    ]
   );
 
   return res.status(201).json({ employee: mapEmployee(rows[0]) });
 });
 
 app.put("/api/employees/:id", requireAuth, requireAdmin, async (req, res) => {
-  const { password, name, team, joinDate, retirementDate, isAdmin } = req.body;
+  const {
+    password,
+    name,
+    team,
+    joinDate,
+    retirementDate,
+    isAdmin,
+    address,
+    residentNumber,
+  } = req.body;
+
+  const addressValue = address === undefined ? null : address;
+  const residentNumberValue = residentNumber === undefined ? null : residentNumber;
 
   const { rows: existing } = await pool.query(
     "SELECT employee_id FROM employees WHERE employee_id = $1",
@@ -181,9 +231,11 @@ app.put("/api/employees/:id", requireAuth, requireAdmin, async (req, res) => {
         team = COALESCE($3, team),
         join_date = COALESCE($4, join_date),
         retirement_date = $5,
-        is_admin = COALESCE($6, is_admin)
-      WHERE employee_id = $7
-      RETURNING employee_id, name, team, join_date, retirement_date, is_admin
+        is_admin = COALESCE($6, is_admin),
+        address = COALESCE($7, address),
+        resident_number = COALESCE($8, resident_number)
+      WHERE employee_id = $9
+      RETURNING employee_id, name, team, join_date, retirement_date, is_admin, address, resident_number
     `,
     [
       password || null,
@@ -192,6 +244,8 @@ app.put("/api/employees/:id", requireAuth, requireAdmin, async (req, res) => {
       joinDate || null,
       retirementDate === "" ? null : retirementDate ?? null,
       typeof isAdmin === "boolean" ? isAdmin : null,
+      addressValue,
+      residentNumberValue,
       req.params.id,
     ]
   );
@@ -201,7 +255,7 @@ app.put("/api/employees/:id", requireAuth, requireAdmin, async (req, res) => {
 
 app.delete("/api/employees/:id", requireAuth, requireAdmin, async (req, res) => {
   const { rows } = await pool.query(
-    "DELETE FROM employees WHERE employee_id = $1 RETURNING employee_id, name, team, join_date, retirement_date, is_admin",
+    "DELETE FROM employees WHERE employee_id = $1 RETURNING employee_id, name, team, join_date, retirement_date, is_admin, address, resident_number",
     [req.params.id]
   );
   if (rows.length === 0) {
@@ -228,6 +282,15 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
       .replace(/\/$/, "");
     const verifyUrl = `${baseUrl}/verify/${encodeURIComponent(documentNumber)}`;
 
+    const residentNumberRaw = String(req.session.employee.residentNumber || "").trim();
+    const shouldMaskResidentNumber = parseMaskResidentNumber(
+      req.query.maskResidentNumber
+    );
+    const residentNumberForVerify = shouldMaskResidentNumber
+      ? maskResidentNumber(residentNumberRaw)
+      : residentNumberRaw;
+    const residentNumberForPdf = residentNumberRaw;
+
     const issuePayload = {
       documentNumber,
       certificateId: certificate.id,
@@ -237,6 +300,8 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
       employee: {
         employeeId: req.session.employee.employeeId,
         name: req.session.employee.name,
+        address: req.session.employee.address || "",
+        residentNumber: residentNumberForVerify,
         team: req.session.employee.team,
         joinDate: req.session.employee.joinDate,
         retirementDate: req.session.employee.retirementDate || "",
@@ -343,6 +408,8 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
 
     const rows = [
       ["성명", req.session.employee.name],
+      ["주민등록번호", residentNumberForPdf],
+      ["주소", req.session.employee.address || ""],
       ["소속팀", req.session.employee.team],
       ["입사일자", req.session.employee.joinDate],
       ["퇴직일자", req.session.employee.retirementDate || "재직 중"],
@@ -350,10 +417,16 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
       ["문서번호", documentNumber],
     ];
 
+    const valueWidth = doc.page.width - doc.page.margins.right - valueX;
     rows.forEach(([label, value]) => {
+      const displayValue =
+        value === undefined || value === null || value === "" ? "-" : String(value);
+
       doc.fontSize(11).fillColor("#666").text(label, labelX, cursorY);
-      doc.fontSize(12).fillColor("#222").text(value, valueX, cursorY);
-      cursorY += rowGap;
+      doc.fontSize(12).fillColor("#222");
+      const valueHeight = doc.heightOfString(displayValue, { width: valueWidth });
+      doc.text(displayValue, valueX, cursorY, { width: valueWidth });
+      cursorY += Math.max(rowGap, valueHeight + 6);
     });
 
     const stampWidth = 220;
@@ -457,6 +530,8 @@ app.get("/verify/:documentNumber", async (req, res) => {
 
     const verificationRows = [
       ["성명", employee.name],
+      ["주민등록번호", employee.residentNumber],
+      ["주소", employee.address],
       ["소속팀", employee.team],
       ["입사일자", employee.joinDate],
       ["퇴직일자", employee.retirementDate || "재직 중"],
