@@ -3,3 +3,9 @@ node_modules/
 .env
 .env.*
 *.log
+
+assets/withholding_master.pdf
+assets/withholding_master.pages.json
+
+private/withholding_master.pdf
+private/withholding_master.pages.json

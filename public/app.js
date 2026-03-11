@@ -291,6 +291,8 @@ certificateList.addEventListener("click", async (event) => {
   if (!button) return;
 
   const id = button.dataset.id;
+  const certificate = state.certificates.find((item) => item.id === id);
+  const filename = certificate?.filename || `${id}_certificate.pdf`;
   const originalText = button.textContent;
   button.textContent = "다운로드 중...";
   button.disabled = true;
@@ -308,19 +310,19 @@ certificateList.addEventListener("click", async (event) => {
     
     // 모바일에서 파일 다운로드 처리
     if (navigator.share && navigator.canShare && blob.type === 'application/pdf') {
-      const file = new File([blob], `${id}_certificate.pdf`, { type: 'application/pdf' });
+      const file = new File([blob], filename, { type: 'application/pdf' });
       try {
         await navigator.share({
-          title: `${state.certificates.find(c => c.id === id)?.title}`,
+          title: `${certificate?.title}`,
           text: '문서가 발급되었습니다.',
           files: [file],
         });
       } catch (shareError) {
         // 공유 실패 시 기본 다운로드
-        downloadFile(blob, `${id}_certificate.pdf`);
+        downloadFile(blob, filename);
       }
     } else {
-      downloadFile(blob, `${id}_certificate.pdf`);
+      downloadFile(blob, filename);
     }
 
     state.lastIssued = new Date().toLocaleDateString("ko-KR");

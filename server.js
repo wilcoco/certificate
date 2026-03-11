@@ -3,6 +3,7 @@ const path = require("path");
 const session = require("express-session");
 const fs = require("fs");
 const PDFDocument = require("pdfkit");
+const { PDFDocument: PDFLibDocument } = require("pdf-lib");
 const QRCode = require("qrcode");
 const { pool, initSchema, mapEmployee } = require("./db");
 
@@ -46,6 +47,12 @@ const certificateLibrary = [
     filename: "career_certificate.pdf",
   },
   {
+    id: "withholding",
+    title: "원천징수 영수증",
+    description: "근로소득 원천징수 내역을 확인하는 문서",
+    filename: "withholding_tax_receipt.pdf",
+  },
+  {
     id: "retirement",
     title: "퇴직 증명서",
     description: "퇴직 사실과 퇴직일자를 확인하는 문서",
@@ -79,6 +86,62 @@ const escapeHtml = (value) => {
 };
 
 const normalizeString = (value) => String(value ?? "").trim();
+
+const WITHHOLDING_MASTER_PDF_PATH =
+  process.env.WITHHOLDING_MASTER_PDF_PATH ||
+  path.join(__dirname, "private", "withholding_master.pdf");
+
+const WITHHOLDING_PAGE_MAP_PATH =
+  process.env.WITHHOLDING_PAGE_MAP_PATH ||
+  path.join(__dirname, "private", "withholding_master.pages.json");
+
+const toPositiveInteger = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return null;
+  const integerValue = Math.trunc(numericValue);
+  if (integerValue !== numericValue || integerValue < 1) return null;
+  return integerValue;
+};
+
+const expandPageRange = (startPage, endPage) => {
+  const pages = [];
+  for (let page = startPage; page <= endPage; page += 1) {
+    pages.push(page);
+  }
+  return pages;
+};
+
+const normalizeWithholdingPages = (entry) => {
+  if (!entry) return [];
+
+  if (Array.isArray(entry)) {
+    return entry.map(toPositiveInteger).filter((page) => page !== null);
+  }
+
+  if (typeof entry === "number" || typeof entry === "string") {
+    const single = toPositiveInteger(entry);
+    return single ? [single] : [];
+  }
+
+  if (typeof entry === "object") {
+    const pages = Array.isArray(entry.pages)
+      ? entry.pages
+          .map(toPositiveInteger)
+          .filter((page) => page !== null)
+      : null;
+    if (pages && pages.length > 0) return pages;
+
+    const startPage = toPositiveInteger(entry.startPage ?? entry.start);
+    const endPage = toPositiveInteger(entry.endPage ?? entry.end);
+    if (!startPage) return [];
+    if (!endPage) return [startPage];
+    if (startPage > endPage) return [];
+    return expandPageRange(startPage, endPage);
+  }
+
+  return [];
+};
 
 const parseMaskResidentNumber = (value) => {
   if (value === undefined || value === null || value === "") return true;
@@ -320,6 +383,68 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
   const certificate = certificateLibrary.find((item) => item.id === req.params.id);
   if (!certificate) {
     return res.status(404).json({ message: "문서를 찾을 수 없습니다." });
+  }
+
+  if (certificate.id === "withholding") {
+    try {
+      if (!fs.existsSync(WITHHOLDING_MASTER_PDF_PATH)) {
+        return res.status(500).json({
+          message: "원천징수 영수증 원본 PDF 파일이 서버에 등록되지 않았습니다.",
+        });
+      }
+
+      if (!fs.existsSync(WITHHOLDING_PAGE_MAP_PATH)) {
+        return res.status(500).json({
+          message: "원천징수 영수증 페이지 매핑 파일이 서버에 등록되지 않았습니다.",
+        });
+      }
+
+      const mapRaw = fs.readFileSync(WITHHOLDING_PAGE_MAP_PATH, "utf8");
+      const pageMap = mapRaw ? JSON.parse(mapRaw) : {};
+      const employeeId = req.session.employee.employeeId;
+      const entry = pageMap?.[employeeId];
+      const pages = normalizeWithholdingPages(entry);
+
+      if (!pages.length) {
+        return res.status(404).json({
+          message: "해당 사번의 원천징수 영수증을 찾을 수 없습니다.",
+        });
+      }
+
+      const sourceBytes = fs.readFileSync(WITHHOLDING_MASTER_PDF_PATH);
+      const sourceDoc = await PDFLibDocument.load(sourceBytes);
+      const pageCount = sourceDoc.getPageCount();
+      const uniquePages = Array.from(new Set(pages)).sort((a, b) => a - b);
+
+      const invalidPages = uniquePages.filter(
+        (page) => page < 1 || page > pageCount
+      );
+      if (invalidPages.length > 0) {
+        return res.status(400).json({
+          message: "원천징수 영수증 페이지 정보가 올바르지 않습니다.",
+        });
+      }
+
+      const indices = uniquePages.map((page) => page - 1);
+      const outputDoc = await PDFLibDocument.create();
+      const copiedPages = await outputDoc.copyPages(sourceDoc, indices);
+      copiedPages.forEach((page) => outputDoc.addPage(page));
+      const outputBytes = await outputDoc.save();
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${certificate.filename}"`
+      );
+
+      return res.status(200).send(Buffer.from(outputBytes));
+    } catch (error) {
+      console.error("원천징수 영수증 PDF 추출 실패", error);
+      return res
+        .status(500)
+        .json({ message: "원천징수 영수증 PDF 생성에 실패했습니다." });
+    }
   }
 
   try {
