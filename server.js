@@ -2,6 +2,9 @@ const express = require("express");
 const path = require("path");
 const session = require("express-session");
 const fs = require("fs");
+const crypto = require("crypto");
+const multer = require("multer");
+const AdmZip = require("adm-zip");
 const PDFDocument = require("pdfkit");
 const { PDFDocument: PDFLibDocument } = require("pdf-lib");
 const QRCode = require("qrcode");
@@ -10,6 +13,13 @@ const { pool, initSchema, mapEmployee } = require("./db");
 const app = express();
 app.set("trust proxy", 1);
 const PORT = process.env.PORT || 3001;
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 1024 * 1024 * 200,
+  },
+});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -160,6 +170,40 @@ const maskResidentNumber = (value) => {
   const backFirst = digits.slice(6, 7);
   const maskLength = Math.max(0, digits.length - 7);
   return `${front}-${backFirst}${"*".repeat(maskLength)}`;
+};
+
+const normalizeResidentDigits = (value) =>
+  String(value || "").replace(/[^0-9]/g, "");
+
+const parseWithholdingReceiptFilename = (filename) => {
+  const base = path.basename(String(filename || ""));
+  const match = base.match(
+    /^(\d{6})-?(\d{7})_(\d{4}-\d{2}-\d{2})\.pdf$/i
+  );
+  if (!match) return null;
+  const rrnDigits = `${match[1]}${match[2]}`;
+  const workStartDate = match[3];
+  return { rrnDigits, workStartDate, taxYear: Number(workStartDate.slice(0, 4)) };
+};
+
+const maskReceiptFilename = (filename) => {
+  const base = path.basename(String(filename || ""));
+  const parsed = parseWithholdingReceiptFilename(base);
+  if (parsed) {
+    return `******-*******_${parsed.workStartDate}.pdf`;
+  }
+  return base.replace(/[0-9]/g, "*");
+};
+
+const hashResidentDigits = (digits) => {
+  const salt =
+    process.env.RESIDENT_NUMBER_HASH_SALT ||
+    process.env.SESSION_SECRET ||
+    "dev-secret-change-me";
+  return crypto
+    .createHash("sha256")
+    .update(`${salt}:${String(digits || "")}`)
+    .digest("hex");
 };
 
 app.post("/api/login", async (req, res) => {
@@ -378,6 +422,270 @@ app.delete("/api/employees/:id", requireAuth, requireAdmin, async (req, res) => 
   return res.json({ employee: mapEmployee(rows[0]) });
 });
 
+app.post(
+  "/api/admin/withholding-receipts/upload",
+  requireAuth,
+  requireAdmin,
+  upload.single("file"),
+  async (req, res) => {
+    try {
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ message: "업로드 파일이 필요합니다." });
+      }
+
+      const requestedTaxYear = toPositiveInteger(req.body?.taxYear);
+      const { rows: employees } = await pool.query(
+        "SELECT employee_id, resident_number FROM employees"
+      );
+      const employeeByResidentDigits = new Map();
+      employees.forEach((record) => {
+        const digits = normalizeResidentDigits(record.resident_number);
+        if (!digits) return;
+        employeeByResidentDigits.set(digits, normalizeString(record.employee_id));
+      });
+
+      const results = [];
+      let importedCount = 0;
+      let matchedCount = 0;
+      let stagedCount = 0;
+
+      const importOne = async (originalName, buffer) => {
+        const parsed = parseWithholdingReceiptFilename(originalName);
+        if (!parsed) {
+          results.push({
+            filename: maskReceiptFilename(originalName),
+            ok: false,
+            reason: "filename_parse_failed",
+          });
+          return;
+        }
+
+        const taxYear = requestedTaxYear || parsed.taxYear;
+        if (!taxYear) {
+          results.push({
+            filename: maskReceiptFilename(originalName),
+            ok: false,
+            reason: "missing_tax_year",
+          });
+          return;
+        }
+
+        const residentHash = hashResidentDigits(parsed.rrnDigits);
+        const employeeId = employeeByResidentDigits.get(parsed.rrnDigits);
+
+        if (employeeId) {
+          await pool.query(
+            `
+              INSERT INTO withholding_receipts
+                (employee_id, tax_year, work_start_date, resident_number_hash, pdf_bytes)
+              VALUES
+                ($1, $2, $3, $4, $5)
+              ON CONFLICT (employee_id, tax_year)
+              DO UPDATE SET
+                work_start_date = EXCLUDED.work_start_date,
+                resident_number_hash = EXCLUDED.resident_number_hash,
+                pdf_bytes = EXCLUDED.pdf_bytes,
+                uploaded_at = NOW()
+            `,
+            [
+              employeeId,
+              taxYear,
+              parsed.workStartDate || null,
+              residentHash,
+              buffer,
+            ]
+          );
+
+          importedCount += 1;
+          matchedCount += 1;
+          results.push({
+            filename: maskReceiptFilename(originalName),
+            ok: true,
+            storedAs: "employee",
+            employeeId,
+            taxYear,
+            workStartDate: parsed.workStartDate,
+          });
+          return;
+        }
+
+        await pool.query(
+          `
+            INSERT INTO withholding_receipts_staged
+              (resident_number_hash, tax_year, work_start_date, pdf_bytes)
+            VALUES
+              ($1, $2, $3, $4)
+            ON CONFLICT (resident_number_hash, tax_year)
+            DO UPDATE SET
+              work_start_date = EXCLUDED.work_start_date,
+              pdf_bytes = EXCLUDED.pdf_bytes,
+              uploaded_at = NOW()
+          `,
+          [residentHash, taxYear, parsed.workStartDate || null, buffer]
+        );
+
+        importedCount += 1;
+        stagedCount += 1;
+        results.push({
+          filename: maskReceiptFilename(originalName),
+          ok: true,
+          storedAs: "staged",
+          taxYear,
+          workStartDate: parsed.workStartDate,
+        });
+      };
+
+      const lowerName = String(file.originalname || "").toLowerCase();
+      if (lowerName.endsWith(".zip")) {
+        const zip = new AdmZip(file.buffer);
+        const entries = zip.getEntries();
+        for (const entry of entries) {
+          if (entry.isDirectory) continue;
+          const entryName = entry.entryName || "";
+          if (!String(entryName).toLowerCase().endsWith(".pdf")) continue;
+          await importOne(entryName, entry.getData());
+        }
+      } else {
+        await importOne(file.originalname, file.buffer);
+      }
+
+      const skippedCount = results.length - importedCount;
+      const includeResultsRaw = String(req.query?.details || "").toLowerCase();
+      const includeResults = ["1", "true", "yes", "on"].includes(
+        includeResultsRaw
+      );
+      const responsePayload = {
+        importedCount,
+        matchedCount,
+        stagedCount,
+        skippedCount,
+      };
+      if (includeResults) {
+        responsePayload.results = results;
+      }
+      return res.json(responsePayload);
+    } catch (error) {
+      console.error("원천징수 영수증 업로드 실패", error);
+      return res
+        .status(500)
+        .json({ message: "원천징수 영수증 업로드에 실패했습니다." });
+    }
+  }
+);
+
+app.post(
+  "/api/admin/withholding-receipts/link",
+  requireAuth,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const employeeId = normalizeString(req.body?.employeeId);
+      const employeeName = normalizeString(req.body?.name);
+      const residentDigits = normalizeResidentDigits(req.body?.residentNumber);
+      const requestedTaxYear = toPositiveInteger(req.body?.taxYear);
+
+      if (!employeeId || !employeeName || !residentDigits) {
+        return res
+          .status(400)
+          .json({ message: "사번, 이름, 주민등록번호를 입력해주세요." });
+      }
+
+      if (residentDigits.length !== 13) {
+        return res
+          .status(400)
+          .json({ message: "주민등록번호 형식이 올바르지 않습니다." });
+      }
+
+      const { rows: employees } = await pool.query(
+        "SELECT employee_id, name FROM employees WHERE employee_id = $1",
+        [employeeId]
+      );
+      const employee = employees[0];
+      if (!employee) {
+        return res.status(404).json({ message: "사원을 찾을 수 없습니다." });
+      }
+
+      const actualName = normalizeString(employee.name);
+      if (actualName && actualName !== employeeName) {
+        return res.status(400).json({ message: "사번과 이름이 일치하지 않습니다." });
+      }
+
+      const residentHash = hashResidentDigits(residentDigits);
+      const { rows: stagedRows } = await pool.query(
+        "SELECT resident_number_hash, tax_year, work_start_date, pdf_bytes FROM withholding_receipts_staged WHERE resident_number_hash = $1",
+        [residentHash]
+      );
+
+      const normalizedStaged = (stagedRows || [])
+        .map((row) => ({
+          ...row,
+          taxYear: Number(row.tax_year),
+        }))
+        .filter((row) => Number.isFinite(row.taxYear));
+
+      const selected = requestedTaxYear
+        ? normalizedStaged.filter((row) => row.taxYear === requestedTaxYear)
+        : normalizedStaged;
+
+      if (selected.length === 0) {
+        return res.status(404).json({
+          message: "매칭할 스테이징 영수증을 찾을 수 없습니다.",
+        });
+      }
+
+      const linkedTaxYears = [];
+      for (const row of selected) {
+        const taxYear = row.taxYear;
+        const pdfBytes = Buffer.isBuffer(row.pdf_bytes)
+          ? row.pdf_bytes
+          : Buffer.from(row.pdf_bytes);
+
+        await pool.query(
+          `
+            INSERT INTO withholding_receipts
+              (employee_id, tax_year, work_start_date, resident_number_hash, pdf_bytes)
+            VALUES
+              ($1, $2, $3, $4, $5)
+            ON CONFLICT (employee_id, tax_year)
+            DO UPDATE SET
+              work_start_date = EXCLUDED.work_start_date,
+              resident_number_hash = EXCLUDED.resident_number_hash,
+              pdf_bytes = EXCLUDED.pdf_bytes,
+              uploaded_at = NOW()
+          `,
+          [
+            employeeId,
+            taxYear,
+            row.work_start_date || null,
+            residentHash,
+            pdfBytes,
+          ]
+        );
+
+        await pool.query(
+          "DELETE FROM withholding_receipts_staged WHERE resident_number_hash = $1 AND tax_year = $2",
+          [residentHash, taxYear]
+        );
+
+        linkedTaxYears.push(taxYear);
+      }
+
+      linkedTaxYears.sort((a, b) => a - b);
+      return res.json({
+        employeeId,
+        linkedCount: linkedTaxYears.length,
+        taxYears: linkedTaxYears,
+      });
+    } catch (error) {
+      console.error("원천징수 영수증 매칭 실패", error);
+      return res
+        .status(500)
+        .json({ message: "원천징수 영수증 매칭에 실패했습니다." });
+    }
+  }
+);
+
 app.get("/api/certificates/:id", requireAuth, async (req, res) => {
 
   const certificate = certificateLibrary.find((item) => item.id === req.params.id);
@@ -387,21 +695,56 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
 
   if (certificate.id === "withholding") {
     try {
+      const employeeId = req.session.employee.employeeId;
+
+      const requestedTaxYear = toPositiveInteger(req.query.taxYear);
+      const { rows } = await pool.query(
+        "SELECT employee_id, tax_year, pdf_bytes FROM withholding_receipts WHERE employee_id = $1",
+        [employeeId]
+      );
+      const sorted = rows
+        .map((row) => ({
+          ...row,
+          taxYear: Number(row.tax_year),
+        }))
+        .filter((row) => Number.isFinite(row.taxYear))
+        .sort((a, b) => b.taxYear - a.taxYear);
+
+      const selected = requestedTaxYear
+        ? sorted.find((row) => row.taxYear === requestedTaxYear)
+        : sorted[0];
+
+      if (selected?.pdf_bytes) {
+        const pdfBytes = Buffer.isBuffer(selected.pdf_bytes)
+          ? selected.pdf_bytes
+          : Buffer.from(selected.pdf_bytes);
+        const downloadFilename = selected.taxYear
+          ? `withholding_tax_receipt_${selected.taxYear}.pdf`
+          : certificate.filename;
+
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${downloadFilename}"`
+        );
+        return res.status(200).send(pdfBytes);
+      }
+
       if (!fs.existsSync(WITHHOLDING_MASTER_PDF_PATH)) {
-        return res.status(500).json({
-          message: "원천징수 영수증 원본 PDF 파일이 서버에 등록되지 않았습니다.",
+        return res.status(404).json({
+          message: "해당 사번의 원천징수 영수증을 찾을 수 없습니다.",
         });
       }
 
       if (!fs.existsSync(WITHHOLDING_PAGE_MAP_PATH)) {
-        return res.status(500).json({
-          message: "원천징수 영수증 페이지 매핑 파일이 서버에 등록되지 않았습니다.",
+        return res.status(404).json({
+          message: "해당 사번의 원천징수 영수증을 찾을 수 없습니다.",
         });
       }
 
       const mapRaw = fs.readFileSync(WITHHOLDING_PAGE_MAP_PATH, "utf8");
       const pageMap = mapRaw ? JSON.parse(mapRaw) : {};
-      const employeeId = req.session.employee.employeeId;
       const entry = pageMap?.[employeeId];
       const pages = normalizeWithholdingPages(entry);
 

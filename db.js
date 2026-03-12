@@ -14,8 +14,16 @@ if (isDevelopment && !connectionString) {
   const memoryDB = {
     employees: [],
     certificate_issues: [],
+    withholding_receipts: [],
+    withholding_receipts_staged: [],
     query: async (text, params) => {
-      console.log("Query:", text, params);
+      const safeParams = (params || []).map((value) => {
+        if (Buffer.isBuffer(value)) {
+          return `<Buffer length=${value.length}>`;
+        }
+        return value;
+      });
+      console.log("Query:", text, safeParams);
       
       if (text.includes("CREATE TABLE")) {
         return { rows: [] };
@@ -38,6 +46,34 @@ if (isDevelopment && !connectionString) {
             return { rows: issue ? [issue] : [] };
           }
           return { rows: memoryDB.certificate_issues };
+        }
+
+        if (text.includes("FROM withholding_receipts")) {
+          if (text.includes("WHERE employee_id =")) {
+            const employeeId = params[0];
+            const rows = memoryDB.withholding_receipts
+              .filter((item) => item.employee_id === employeeId)
+              .sort((a, b) => (b.tax_year || 0) - (a.tax_year || 0));
+            if (text.includes("LIMIT 1")) {
+              return { rows: rows.length ? [rows[0]] : [] };
+            }
+            return { rows };
+          }
+          return { rows: memoryDB.withholding_receipts };
+        }
+
+        if (text.includes("FROM withholding_receipts_staged")) {
+          if (text.includes("WHERE resident_number_hash =")) {
+            const residentHash = params[0];
+            const rows = memoryDB.withholding_receipts_staged
+              .filter((item) => item.resident_number_hash === residentHash)
+              .sort((a, b) => (b.tax_year || 0) - (a.tax_year || 0));
+            if (text.includes("LIMIT 1")) {
+              return { rows: rows.length ? [rows[0]] : [] };
+            }
+            return { rows };
+          }
+          return { rows: memoryDB.withholding_receipts_staged };
         }
 
         if (text.includes("WHERE employee_id =")) {
@@ -66,6 +102,57 @@ if (isDevelopment && !connectionString) {
             memoryDB.certificate_issues.push(newIssue);
           }
           return { rows: [newIssue] };
+        }
+
+        if (text.includes("INSERT INTO withholding_receipts")) {
+          const newReceipt = {
+            employee_id: params[0],
+            tax_year: params[1],
+            work_start_date: params[2],
+            resident_number_hash: params[3],
+            pdf_bytes: params[4],
+            uploaded_at: new Date().toISOString(),
+          };
+
+          const existingIndex = memoryDB.withholding_receipts.findIndex(
+            (item) =>
+              item.employee_id === newReceipt.employee_id &&
+              item.tax_year === newReceipt.tax_year
+          );
+          if (existingIndex !== -1) {
+            memoryDB.withholding_receipts[existingIndex] = {
+              ...memoryDB.withholding_receipts[existingIndex],
+              ...newReceipt,
+            };
+            return { rows: [memoryDB.withholding_receipts[existingIndex]] };
+          }
+          memoryDB.withholding_receipts.push(newReceipt);
+          return { rows: [newReceipt] };
+        }
+
+        if (text.includes("INSERT INTO withholding_receipts_staged")) {
+          const newReceipt = {
+            resident_number_hash: params[0],
+            tax_year: params[1],
+            work_start_date: params[2],
+            pdf_bytes: params[3],
+            uploaded_at: new Date().toISOString(),
+          };
+
+          const existingIndex = memoryDB.withholding_receipts_staged.findIndex(
+            (item) =>
+              item.resident_number_hash === newReceipt.resident_number_hash &&
+              item.tax_year === newReceipt.tax_year
+          );
+          if (existingIndex !== -1) {
+            memoryDB.withholding_receipts_staged[existingIndex] = {
+              ...memoryDB.withholding_receipts_staged[existingIndex],
+              ...newReceipt,
+            };
+            return { rows: [memoryDB.withholding_receipts_staged[existingIndex]] };
+          }
+          memoryDB.withholding_receipts_staged.push(newReceipt);
+          return { rows: [newReceipt] };
         }
 
         if (text.includes("INSERT INTO employees")) {
@@ -111,6 +198,21 @@ if (isDevelopment && !connectionString) {
       }
       
       if (text.includes("DELETE")) {
+        if (text.includes("DELETE FROM withholding_receipts_staged")) {
+          const residentHash = params[0];
+          const taxYear = params[1];
+          const index = memoryDB.withholding_receipts_staged.findIndex(
+            (item) =>
+              item.resident_number_hash === residentHash &&
+              item.tax_year === taxYear
+          );
+          if (index !== -1) {
+            const deleted = memoryDB.withholding_receipts_staged.splice(index, 1)[0];
+            return { rows: [deleted] };
+          }
+          return { rows: [] };
+        }
+
         if (!text.includes("DELETE FROM employees")) {
           return { rows: [] };
         }
@@ -221,6 +323,29 @@ const initSchema = async () => {
       employee_id TEXT NOT NULL,
       issued_at TIMESTAMPTZ NOT NULL,
       payload JSONB NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS withholding_receipts (
+      employee_id TEXT NOT NULL REFERENCES employees(employee_id) ON DELETE CASCADE,
+      tax_year INT NOT NULL,
+      work_start_date DATE,
+      resident_number_hash TEXT NOT NULL,
+      pdf_bytes BYTEA NOT NULL,
+      uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (employee_id, tax_year)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS withholding_receipts_staged (
+      resident_number_hash TEXT NOT NULL,
+      tax_year INT NOT NULL,
+      work_start_date DATE,
+      pdf_bytes BYTEA NOT NULL,
+      uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (resident_number_hash, tax_year)
     )
   `);
 

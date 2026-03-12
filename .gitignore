@@ -9,3 +9,18 @@ assets/withholding_master.pages.json
 
 private/withholding_master.pdf
 private/withholding_master.pages.json
+
+split_output/
+split_output.zip
+
+.venv/
+
+__pycache__/
+*.pyc
+
+glyph_debug/
+
+split_output_test*/
+split_output_test*.zip
+
+work_period_row_page*.png

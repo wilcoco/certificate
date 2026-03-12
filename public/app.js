@@ -15,6 +15,30 @@ const employeeTable = document.getElementById("employee-table");
 const adminBadge = document.getElementById("admin-badge");
 const maskResidentNumberToggle = document.getElementById("mask-resident-number");
 
+const withholdingUploadForm = document.getElementById(
+  "withholding-upload-form"
+);
+const withholdingUploadFile = document.getElementById("withholdingUploadFile");
+const withholdingTaxYear = document.getElementById("withholdingTaxYear");
+const withholdingUploadStatus = document.getElementById(
+  "withholding-upload-status"
+);
+const withholdingUploadError = document.getElementById(
+  "withholding-upload-error"
+);
+
+const withholdingLinkForm = document.getElementById("withholding-link-form");
+const withholdingLinkEmployeeId = document.getElementById(
+  "withholdingLinkEmployeeId"
+);
+const withholdingLinkName = document.getElementById("withholdingLinkName");
+const withholdingLinkResidentNumber = document.getElementById(
+  "withholdingLinkResidentNumber"
+);
+const withholdingLinkTaxYear = document.getElementById("withholdingLinkTaxYear");
+const withholdingLinkStatus = document.getElementById("withholding-link-status");
+const withholdingLinkError = document.getElementById("withholding-link-error");
+
 const state = {
   employee: null,
   certificates: [],
@@ -358,5 +382,145 @@ logoutButton.addEventListener("click", async () => {
   loginCard.classList.remove("hidden");
   loginForm.reset();
 });
+
+if (withholdingUploadForm) {
+  withholdingUploadForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (withholdingUploadError) withholdingUploadError.textContent = "";
+    if (withholdingUploadStatus) withholdingUploadStatus.textContent = "";
+
+    const file = withholdingUploadFile?.files?.[0];
+    if (!file) {
+      if (withholdingUploadError) {
+        withholdingUploadError.textContent = "업로드 파일을 선택해주세요.";
+      }
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+    const taxYearValue = String(withholdingTaxYear?.value || "").trim();
+    if (taxYearValue) {
+      formData.append("taxYear", taxYearValue);
+    }
+
+    const submitButton = withholdingUploadForm.querySelector("button");
+    const originalButtonText = submitButton?.textContent;
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = "업로드 중...";
+    }
+    if (withholdingUploadStatus) {
+      withholdingUploadStatus.textContent = "업로드 중...";
+    }
+
+    try {
+      const response = await fetch("/api/admin/withholding-receipts/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || "업로드에 실패했습니다.");
+      }
+
+      const imported = data.importedCount ?? 0;
+      const skipped = data.skippedCount ?? 0;
+      const matched = data.matchedCount ?? 0;
+      const staged = data.stagedCount ?? 0;
+      if (withholdingUploadStatus) {
+        const breakdown =
+          matched || staged
+            ? ` (매칭 ${matched}개, 스테이징 ${staged}개)`
+            : "";
+        withholdingUploadStatus.textContent = `업로드 완료: ${imported}개 저장${breakdown}, ${skipped}개 스킵`;
+      }
+      withholdingUploadForm.reset();
+    } catch (error) {
+      if (withholdingUploadError) {
+        withholdingUploadError.textContent = error.message;
+      }
+      if (withholdingUploadStatus) {
+        withholdingUploadStatus.textContent = "";
+      }
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = originalButtonText;
+      }
+    }
+  });
+}
+
+if (withholdingLinkForm) {
+  withholdingLinkForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (withholdingLinkError) withholdingLinkError.textContent = "";
+    if (withholdingLinkStatus) withholdingLinkStatus.textContent = "";
+
+    const employeeIdValue = String(withholdingLinkEmployeeId?.value || "").trim();
+    const nameValue = String(withholdingLinkName?.value || "").trim();
+    const residentNumberValue = String(
+      withholdingLinkResidentNumber?.value || ""
+    ).trim();
+    const taxYearValue = String(withholdingLinkTaxYear?.value || "").trim();
+
+    if (!employeeIdValue || !nameValue || !residentNumberValue) {
+      if (withholdingLinkError) {
+        withholdingLinkError.textContent =
+          "사번, 이름, 주민등록번호를 입력해주세요.";
+      }
+      return;
+    }
+
+    const payload = {
+      employeeId: employeeIdValue,
+      name: nameValue,
+      residentNumber: residentNumberValue,
+    };
+    if (taxYearValue) {
+      payload.taxYear = taxYearValue;
+    }
+
+    const submitButton = withholdingLinkForm.querySelector("button");
+    const originalButtonText = submitButton?.textContent;
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = "매칭 중...";
+    }
+    if (withholdingLinkStatus) {
+      withholdingLinkStatus.textContent = "매칭 중...";
+    }
+
+    try {
+      const data = await fetchJson("/api/admin/withholding-receipts/link", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      const linkedCount = data.linkedCount ?? 0;
+      const taxYears = Array.isArray(data.taxYears) ? data.taxYears : [];
+
+      if (withholdingLinkStatus) {
+        const taxYearText = taxYears.length
+          ? ` (귀속연도: ${taxYears.join(", ")})`
+          : "";
+        withholdingLinkStatus.textContent = `매칭 완료: ${linkedCount}건${taxYearText}`;
+      }
+      withholdingLinkForm.reset();
+    } catch (error) {
+      if (withholdingLinkError) {
+        withholdingLinkError.textContent = error.message;
+      }
+      if (withholdingLinkStatus) {
+        withholdingLinkStatus.textContent = "";
+      }
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = originalButtonText;
+      }
+    }
+  });
+}
 
 loadSession();
