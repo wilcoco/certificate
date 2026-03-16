@@ -218,6 +218,40 @@ const hashResidentDigits = (digits) => {
 
 let oraclePoolPromise = null;
 
+const readOracleTextValue = async (value) => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (Buffer.isBuffer(value)) return value.toString("utf8");
+
+  if (typeof value.getData === "function") {
+    const data = await value.getData();
+    if (data === null || data === undefined) return "";
+    if (typeof data === "string") return data;
+    if (Buffer.isBuffer(data)) return data.toString("utf8");
+    return String(data);
+  }
+
+  if (typeof value.on === "function") {
+    return await new Promise((resolve, reject) => {
+      let text = "";
+      try {
+        if (typeof value.setEncoding === "function") {
+          value.setEncoding("utf8");
+        }
+      } catch (error) {
+      }
+
+      value.on("data", (chunk) => {
+        text += chunk;
+      });
+      value.on("end", () => resolve(text));
+      value.on("error", reject);
+    });
+  }
+
+  return String(value);
+};
+
 const normalizeOracleIdentifier = (value) => {
   const trimmed = String(value || "").trim();
   if (!trimmed) return null;
@@ -282,7 +316,10 @@ const fetchOracleLoginRecord = async (employeeId) => {
       { employeeId },
       { outFormat: oracledb.OUT_FORMAT_OBJECT }
     );
-    return result.rows?.[0] || null;
+    const row = result.rows?.[0] || null;
+    if (!row) return null;
+    row.etc6 = await readOracleTextValue(row.etc6);
+    return row;
   } finally {
     if (connection) {
       try {
@@ -300,6 +337,8 @@ app.post("/api/login", async (req, res) => {
   if (!employeeId || !password) {
     return res.status(400).json({ message: "사번과 비밀번호를 입력해주세요." });
   }
+
+  res.set("X-Auth-Backend", isOracleAuthConfigured() ? "oracle" : "local");
 
   if (isOracleAuthConfigured()) {
     try {
