@@ -10,6 +10,16 @@ const { PDFDocument: PDFLibDocument } = require("pdf-lib");
 const QRCode = require("qrcode");
 const { pool, initSchema, mapEmployee } = require("./db");
 
+let oracledb = null;
+try {
+  oracledb = require("oracledb");
+  const clobType = oracledb.DB_TYPE_CLOB || oracledb.CLOB;
+  const nclobType = oracledb.DB_TYPE_NCLOB || oracledb.NCLOB;
+  oracledb.fetchAsString = [clobType, nclobType].filter(Boolean);
+} catch (error) {
+  oracledb = null;
+}
+
 const app = express();
 app.set("trust proxy", 1);
 const PORT = process.env.PORT || 3001;
@@ -206,6 +216,83 @@ const hashResidentDigits = (digits) => {
     .digest("hex");
 };
 
+let oraclePoolPromise = null;
+
+const normalizeOracleIdentifier = (value) => {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return null;
+  if (!/^[A-Za-z0-9_.$#]+(\.[A-Za-z0-9_.$#]+)*$/.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+};
+
+const isOracleAuthConfigured = () => {
+  if (!oracledb) return false;
+  if (!process.env.ORACLE_DB_USER) return false;
+  if (!process.env.ORACLE_DB_PASSWORD) return false;
+  if (!process.env.ORACLE_DB_CONNECT_STRING) return false;
+  if (!normalizeOracleIdentifier(process.env.ORACLE_EMP_TABLE)) return false;
+  if (!normalizeOracleIdentifier(process.env.ORACLE_PASS_TABLE)) return false;
+  return true;
+};
+
+const getOraclePool = async () => {
+  if (!isOracleAuthConfigured()) return null;
+  if (!oraclePoolPromise) {
+    oraclePoolPromise = oracledb.createPool({
+      user: process.env.ORACLE_DB_USER,
+      password: process.env.ORACLE_DB_PASSWORD,
+      connectString: process.env.ORACLE_DB_CONNECT_STRING,
+      poolMin: 0,
+      poolMax: 4,
+      poolIncrement: 1,
+      poolTimeout: 60,
+    });
+  }
+  return oraclePoolPromise;
+};
+
+const fetchOracleLoginRecord = async (employeeId) => {
+  const oraclePool = await getOraclePool();
+  if (!oraclePool) return null;
+
+  const employeeTable = normalizeOracleIdentifier(process.env.ORACLE_EMP_TABLE);
+  const passwordTable = normalizeOracleIdentifier(process.env.ORACLE_PASS_TABLE);
+  if (!employeeTable || !passwordTable) {
+    throw new Error("Oracle 테이블 설정이 올바르지 않습니다.");
+  }
+
+  let connection;
+  try {
+    connection = await oraclePool.getConnection();
+    const result = await connection.execute(
+      `
+        SELECT
+          TRIM(e.BSCSBN) AS "employeeId",
+          e.BSCNAME AS "name",
+          e.BSCJUMNO AS "residentNumber",
+          e.BSCJGN AS "jobGroup",
+          p.ETC6 AS "etc6"
+        FROM ${employeeTable} e
+        LEFT JOIN ${passwordTable} p
+          ON TRIM(p.PWUDSRID) = TRIM(e.BSCSBN)
+        WHERE TRIM(e.BSCSBN) = :employeeId
+      `,
+      { employeeId },
+      { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    );
+    return result.rows?.[0] || null;
+  } finally {
+    if (connection) {
+      try {
+        await connection.close();
+      } catch (error) {
+      }
+    }
+  }
+};
+
 app.post("/api/login", async (req, res) => {
   const employeeId = normalizeString(req.body?.employeeId);
   const password = normalizeString(req.body?.password);
@@ -213,6 +300,77 @@ app.post("/api/login", async (req, res) => {
   if (!employeeId || !password) {
     return res.status(400).json({ message: "사번과 비밀번호를 입력해주세요." });
   }
+
+  if (isOracleAuthConfigured()) {
+    try {
+      const oracleRecord = await fetchOracleLoginRecord(employeeId);
+      if (!oracleRecord) {
+        return res
+          .status(401)
+          .json({ message: "사번 또는 비밀번호가 올바르지 않습니다." });
+      }
+
+      const expectedPassword = normalizeString(oracleRecord.etc6);
+
+      if (!expectedPassword || expectedPassword !== password) {
+        return res
+          .status(401)
+          .json({ message: "사번 또는 비밀번호가 올바르지 않습니다." });
+      }
+
+      const { rows } = await pool.query(
+        `
+          SELECT employee_id, password, name, team, join_date, retirement_date, is_admin, address, resident_number
+          FROM employees
+          WHERE employee_id = $1
+        `,
+        [employeeId]
+      );
+      let employee = rows[0];
+
+      if (!employee) {
+        const { rows: maybeMatches } = await pool.query(
+          "SELECT employee_id, password, name, team, join_date, retirement_date, is_admin, address, resident_number FROM employees WHERE TRIM(employee_id) = $1",
+          [employeeId]
+        );
+        employee = maybeMatches.find(
+          (record) => normalizeString(record.employee_id) === employeeId
+        );
+      }
+
+      const oracleName = normalizeString(oracleRecord.name);
+      const oracleResidentNumber = normalizeString(oracleRecord.residentNumber);
+
+      if (employee) {
+        req.session.employee = {
+          ...mapEmployee(employee),
+          employeeId: normalizeString(employee.employee_id),
+          name: oracleName || mapEmployee(employee).name,
+          residentNumber:
+            mapEmployee(employee).residentNumber || oracleResidentNumber || "",
+        };
+      } else {
+        req.session.employee = {
+          employeeId,
+          name: oracleName || employeeId,
+          team: "",
+          joinDate: "",
+          retirementDate: "",
+          isAdmin: false,
+          address: "",
+          residentNumber: oracleResidentNumber || "",
+        };
+      }
+
+      return res.json({ employee: req.session.employee });
+    } catch (error) {
+      console.error("Oracle 로그인 실패", error);
+      return res
+        .status(500)
+        .json({ message: "로그인 처리 중 오류가 발생했습니다." });
+    }
+  }
+
   const { rows } = await pool.query(
     `
       SELECT employee_id, password, name, team, join_date, retirement_date, is_admin, address, resident_number

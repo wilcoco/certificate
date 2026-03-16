@@ -15,7 +15,8 @@
     "pdf-lib": "^1.17.1",
     "pdfkit": "^0.16.0",
     "qrcode": "^1.5.3",
-    "pg": "^8.11.3"
+    "pg": "^8.11.3",
+    "oracledb": "^6.5.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
