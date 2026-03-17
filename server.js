@@ -13,10 +13,30 @@ const { pool, initSchema, mapEmployee } = require("./db");
 let oracledb = null;
 try {
   oracledb = require("oracledb");
+  const useThickMode = (() => {
+    const value = process.env.ORACLE_USE_THICK_MODE;
+    if (value === undefined || value === null || value === "") return false;
+    const lowered = String(value).trim().toLowerCase();
+    if (["0", "false", "no", "off"].includes(lowered)) return false;
+    return true;
+  })();
+
+  if (useThickMode && typeof oracledb.initOracleClient === "function") {
+    const libDir = String(process.env.ORACLE_CLIENT_LIB_DIR || "").trim();
+    oracledb.initOracleClient(libDir ? { libDir } : undefined);
+  }
+
   const clobType = oracledb.DB_TYPE_CLOB || oracledb.CLOB;
   const nclobType = oracledb.DB_TYPE_NCLOB || oracledb.NCLOB;
   oracledb.fetchAsString = [clobType, nclobType].filter(Boolean);
 } catch (error) {
+  if (
+    process.env.ORACLE_USE_THICK_MODE ||
+    process.env.ORACLE_DB_USER ||
+    process.env.ORACLE_DB_CONNECT_STRING
+  ) {
+    console.error("oracledb 초기화 실패", error);
+  }
   oracledb = null;
 }
 
@@ -338,9 +358,19 @@ app.post("/api/login", async (req, res) => {
     return res.status(400).json({ message: "사번과 비밀번호를 입력해주세요." });
   }
 
-  res.set("X-Auth-Backend", isOracleAuthConfigured() ? "oracle" : "local");
+  const useOracleAuth = isOracleAuthConfigured();
+  res.set("X-Auth-Backend", useOracleAuth ? "oracle" : "local");
+  if (useOracleAuth) {
+    const oracleMode =
+      oracledb && typeof oracledb.thin === "boolean"
+        ? oracledb.thin
+          ? "thin"
+          : "thick"
+        : "unknown";
+    res.set("X-Oracle-Mode", oracleMode);
+  }
 
-  if (isOracleAuthConfigured()) {
+  if (useOracleAuth) {
     try {
       const oracleRecord = await fetchOracleLoginRecord(employeeId);
       if (!oracleRecord) {
@@ -404,6 +434,10 @@ app.post("/api/login", async (req, res) => {
       return res.json({ employee: req.session.employee });
     } catch (error) {
       console.error("Oracle 로그인 실패", error);
+      res.set(
+        "X-Oracle-Error-Code",
+        error && error.code ? String(error.code) : ""
+      );
       return res
         .status(500)
         .json({ message: "로그인 처리 중 오류가 발생했습니다." });

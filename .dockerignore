@@ -1,0 +1,9 @@
+node_modules
+.git
+.venv
+__pycache__
+glyph_debug
+split_output*
+*.zip
+work_period_row_*.png
+private
