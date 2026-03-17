@@ -281,6 +281,40 @@ const normalizeOracleIdentifier = (value) => {
   return trimmed;
 };
 
+const getRequiredOracleIdentifier = (envValue, defaultValue) => {
+  const candidate =
+    envValue === undefined || envValue === null
+      ? String(defaultValue || "").trim()
+      : String(envValue).trim() || String(defaultValue || "").trim();
+
+  const normalized = normalizeOracleIdentifier(candidate);
+  if (!normalized) {
+    throw new Error("Oracle 컬럼 설정이 올바르지 않습니다.");
+  }
+  return normalized;
+};
+
+const getOptionalOracleIdentifier = (envValue, defaultValue) => {
+  if (envValue === undefined || envValue === null) {
+    return normalizeOracleIdentifier(defaultValue);
+  }
+  const trimmed = String(envValue).trim();
+  if (!trimmed) return null;
+  const normalized = normalizeOracleIdentifier(trimmed);
+  if (!normalized) {
+    throw new Error("Oracle 컬럼 설정이 올바르지 않습니다.");
+  }
+  return normalized;
+};
+
+const extractOracleInvalidIdentifier = (error) => {
+  const message = String(error && error.message ? error.message : "");
+  const matches = [...message.matchAll(/"([^"]+)"/g)];
+  if (!matches.length) return "";
+  const last = matches[matches.length - 1];
+  return last && last[1] ? last[1] : "";
+};
+
 const isOracleAuthConfigured = () => {
   if (!oracledb) return false;
   if (!process.env.ORACLE_DB_USER) return false;
@@ -317,28 +351,95 @@ const fetchOracleLoginRecord = async (employeeId) => {
     throw new Error("Oracle 테이블 설정이 올바르지 않습니다.");
   }
 
+  const employeeIdColumn = getRequiredOracleIdentifier(
+    process.env.ORACLE_EMP_COL_EMPLOYEE_ID,
+    "BSCSBN"
+  );
+  const employeeNameColumn = getOptionalOracleIdentifier(
+    process.env.ORACLE_EMP_COL_NAME,
+    "BSCNAME"
+  );
+  const employeeResidentNumberColumn = getOptionalOracleIdentifier(
+    process.env.ORACLE_EMP_COL_RESIDENT_NUMBER,
+    "BSCJUMNO"
+  );
+  const employeeJobGroupColumn = getOptionalOracleIdentifier(
+    process.env.ORACLE_EMP_COL_JOB_GROUP,
+    "BSCJGN"
+  );
+  const passwordUserIdColumn = getRequiredOracleIdentifier(
+    process.env.ORACLE_PASS_COL_USER_ID,
+    "PWUDSRID"
+  );
+  const passwordValueColumn = getRequiredOracleIdentifier(
+    process.env.ORACLE_PASS_COL_PASSWORD,
+    "ETC6"
+  );
+
   let connection;
   try {
     connection = await oraclePool.getConnection();
-    const result = await connection.execute(
-      `
-        SELECT
-          TRIM(e.BSCSBN) AS "employeeId",
-          e.BSCNAME AS "name",
-          e.BSCJUMNO AS "residentNumber",
-          e.BSCJGN AS "jobGroup",
-          p.ETC6 AS "etc6"
-        FROM ${employeeTable} e
-        LEFT JOIN ${passwordTable} p
-          ON TRIM(p.PWUDSRID) = TRIM(e.BSCSBN)
-        WHERE TRIM(e.BSCSBN) = :employeeId
-      `,
-      { employeeId },
-      { outFormat: oracledb.OUT_FORMAT_OBJECT }
-    );
+    const selectFragments = [
+      `TRIM(e.${employeeIdColumn}) AS "employeeId"`,
+      employeeNameColumn
+        ? `e.${employeeNameColumn} AS "name"`
+        : 'NULL AS "name"',
+      employeeResidentNumberColumn
+        ? `e.${employeeResidentNumberColumn} AS "residentNumber"`
+        : 'NULL AS "residentNumber"',
+      employeeJobGroupColumn
+        ? `e.${employeeJobGroupColumn} AS "jobGroup"`
+        : 'NULL AS "jobGroup"',
+      `p.${passwordValueColumn} AS "etc6"`,
+    ];
+
+    let result;
+    let fallbackDiagnostics = null;
+    try {
+      result = await connection.execute(
+        `
+          SELECT
+            ${selectFragments.join(",\n            ")}
+          FROM ${employeeTable} e
+          LEFT JOIN ${passwordTable} p
+            ON TRIM(p.${passwordUserIdColumn}) = TRIM(e.${employeeIdColumn})
+          WHERE TRIM(e.${employeeIdColumn}) = :employeeId
+        `,
+        { employeeId },
+        { outFormat: oracledb.OUT_FORMAT_OBJECT }
+      );
+    } catch (error) {
+      const oracleErrorCode = error && error.code ? String(error.code) : "";
+      if (["ORA-00904", "ORA-00942"].includes(oracleErrorCode)) {
+        fallbackDiagnostics = {
+          code: oracleErrorCode,
+          invalidIdentifier: extractOracleInvalidIdentifier(error),
+        };
+        result = await connection.execute(
+          `
+            SELECT
+              TRIM(p.${passwordUserIdColumn}) AS "employeeId",
+              NULL AS "name",
+              NULL AS "residentNumber",
+              NULL AS "jobGroup",
+              p.${passwordValueColumn} AS "etc6"
+            FROM ${passwordTable} p
+            WHERE TRIM(p.${passwordUserIdColumn}) = :employeeId
+          `,
+          { employeeId },
+          { outFormat: oracledb.OUT_FORMAT_OBJECT }
+        );
+      } else {
+        throw error;
+      }
+    }
+
     const row = result.rows?.[0] || null;
     if (!row) return null;
     row.etc6 = await readOracleTextValue(row.etc6);
+    if (fallbackDiagnostics) {
+      row.__oracleFallbackDiagnostics = fallbackDiagnostics;
+    }
     return row;
   } finally {
     if (connection) {
@@ -377,6 +478,17 @@ app.post("/api/login", async (req, res) => {
         return res
           .status(401)
           .json({ message: "사번 또는 비밀번호가 올바르지 않습니다." });
+      }
+
+      if (oracleRecord.__oracleFallbackDiagnostics) {
+        const { code, invalidIdentifier } =
+          oracleRecord.__oracleFallbackDiagnostics;
+        if (code) {
+          res.set("X-Oracle-Query-Fallback", code);
+        }
+        if (invalidIdentifier) {
+          res.set("X-Oracle-Invalid-Identifier", invalidIdentifier);
+        }
       }
 
       const expectedPassword = normalizeString(oracleRecord.etc6);
@@ -434,10 +546,14 @@ app.post("/api/login", async (req, res) => {
       return res.json({ employee: req.session.employee });
     } catch (error) {
       console.error("Oracle 로그인 실패", error);
-      res.set(
-        "X-Oracle-Error-Code",
-        error && error.code ? String(error.code) : ""
-      );
+      const oracleErrorCode = error && error.code ? String(error.code) : "";
+      res.set("X-Oracle-Error-Code", oracleErrorCode);
+      if (oracleErrorCode === "ORA-00904") {
+        const invalidIdentifier = extractOracleInvalidIdentifier(error);
+        if (invalidIdentifier) {
+          res.set("X-Oracle-Invalid-Identifier", invalidIdentifier);
+        }
+      }
       return res
         .status(500)
         .json({ message: "로그인 처리 중 오류가 발생했습니다." });
