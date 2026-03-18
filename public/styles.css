@@ -402,4 +402,16 @@ tbody tr:last-child td {
   .grid-form button {
     grid-column: 1 / -1;
   }
+
+  #employee-admin .table-wrap {
+    max-height: 360px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #employee-admin .table-wrap th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
 }
