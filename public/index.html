@@ -138,6 +138,15 @@
 
           <h2>원천징수 영수증 매칭</h2>
           <p class="muted">스테이징된 영수증을 사번으로 연결합니다.</p>
+          <form id="withholding-auto-link-form" class="grid-form">
+            <div>
+              <label for="withholdingAutoLinkTaxYear">귀속연도(선택)</label>
+              <input id="withholdingAutoLinkTaxYear" name="taxYear" type="number" inputmode="numeric" placeholder="비우면 전체" />
+            </div>
+            <button type="submit" class="primary">자동 매칭</button>
+          </form>
+          <p class="helper" id="withholding-auto-link-status"></p>
+          <p class="error" id="withholding-auto-link-error"></p>
           <form id="withholding-link-form" class="grid-form">
             <div>
               <label for="withholdingLinkEmployeeId">사번</label>

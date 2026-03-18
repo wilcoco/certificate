@@ -477,6 +477,65 @@ const fetchOracleEmployees = async () => {
   }
 };
 
+const fetchOracleEmployeesWithResidentNumbers = async () => {
+  const oraclePool = await getOraclePool();
+  if (!oraclePool) return null;
+
+  const employeeTable = normalizeOracleIdentifier(process.env.ORACLE_EMP_TABLE);
+  if (!employeeTable) {
+    throw new Error("Oracle 테이블 설정이 올바르지 않습니다.");
+  }
+
+  const employeeIdColumn = getRequiredOracleIdentifier(
+    process.env.ORACLE_EMP_COL_EMPLOYEE_ID,
+    "BSCSBN"
+  );
+  const employeeResidentNumberColumn = getOptionalOracleIdentifier(
+    process.env.ORACLE_EMP_COL_RESIDENT_NUMBER,
+    "BSCJUMNO"
+  );
+
+  if (!employeeResidentNumberColumn) return null;
+
+  let connection;
+  try {
+    connection = await oraclePool.getConnection();
+
+    const result = await connection.execute(
+      `
+        SELECT
+          TRIM(e.${employeeIdColumn}) AS "employeeId",
+          e.${employeeResidentNumberColumn} AS "residentNumber"
+        FROM ${employeeTable} e
+      `,
+      {},
+      { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    );
+
+    const rows = Array.isArray(result.rows) ? result.rows : [];
+    const employees = [];
+    for (const row of rows) {
+      const employeeIdValue = normalizeString(row.employeeId);
+      if (!employeeIdValue) continue;
+
+      const residentNumberValue = await readOracleTextValue(row.residentNumber);
+      const residentDigits = normalizeResidentDigits(residentNumberValue);
+      if (residentDigits.length !== 13) continue;
+
+      employees.push({ employeeId: employeeIdValue, residentDigits });
+    }
+
+    return employees;
+  } finally {
+    if (connection) {
+      try {
+        await connection.close();
+      } catch (error) {
+      }
+    }
+  }
+};
+
 const fetchOracleLoginRecord = async (employeeId) => {
   const oraclePool = await getOraclePool();
   if (!oraclePool) return null;
@@ -1128,6 +1187,237 @@ app.post(
       return res
         .status(500)
         .json({ message: "원천징수 영수증 업로드에 실패했습니다." });
+    }
+  }
+);
+
+app.post(
+  "/api/admin/withholding-receipts/auto-link",
+  requireAuth,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const requestedTaxYear = toPositiveInteger(req.body?.taxYear);
+
+      const includeResultsRaw = String(req.query?.details || "").toLowerCase();
+      const includeResults = ["1", "true", "yes", "on"].includes(
+        includeResultsRaw
+      );
+
+      const { rows: stagedRows } = await pool.query(
+        "SELECT resident_number_hash, tax_year, work_start_date, pdf_bytes FROM withholding_receipts_staged"
+      );
+
+      const normalizedStaged = (stagedRows || [])
+        .map((row) => ({
+          ...row,
+          taxYear: Number(row.tax_year),
+        }))
+        .filter((row) => Number.isFinite(row.taxYear));
+
+      const targets = requestedTaxYear
+        ? normalizedStaged.filter((row) => row.taxYear === requestedTaxYear)
+        : normalizedStaged;
+
+      const { rows: employees } = await pool.query(
+        "SELECT employee_id, resident_number FROM employees"
+      );
+      const employeeIdSet = new Set(
+        (employees || [])
+          .map((row) => normalizeString(row.employee_id))
+          .filter(Boolean)
+      );
+
+      const residentHashToEmployee = new Map();
+      const conflictingHashes = new Set();
+      let postgresHashCount = 0;
+      let oracleHashCount = 0;
+      let oracleLookupOk = false;
+
+      const upsertMapping = (residentHash, employeeId, existsInEmployees) => {
+        if (!residentHash || !employeeId) return;
+        if (conflictingHashes.has(residentHash)) return;
+
+        const existing = residentHashToEmployee.get(residentHash);
+        if (!existing) {
+          residentHashToEmployee.set(residentHash, {
+            employeeId,
+            existsInEmployees: Boolean(existsInEmployees),
+          });
+          return;
+        }
+
+        if (existing.employeeId === employeeId) {
+          if (existsInEmployees && !existing.existsInEmployees) {
+            residentHashToEmployee.set(residentHash, {
+              employeeId,
+              existsInEmployees: true,
+            });
+          }
+          return;
+        }
+
+        conflictingHashes.add(residentHash);
+        residentHashToEmployee.delete(residentHash);
+      };
+
+      (employees || []).forEach((row) => {
+        const employeeId = normalizeString(row.employee_id);
+        if (!employeeId) return;
+
+        const digits = normalizeResidentDigits(row.resident_number);
+        if (digits.length !== 13) return;
+        const residentHash = hashResidentDigits(digits);
+        upsertMapping(residentHash, employeeId, true);
+        postgresHashCount += 1;
+      });
+
+      if (isOracleAuthConfigured()) {
+        try {
+          const oracleEmployees = await fetchOracleEmployeesWithResidentNumbers();
+          if (oracleEmployees) {
+            oracleLookupOk = true;
+            oracleEmployees.forEach((record) => {
+              const employeeId = normalizeString(record.employeeId);
+              if (!employeeId) return;
+              const digits = normalizeResidentDigits(record.residentDigits);
+              if (digits.length !== 13) return;
+
+              const residentHash = hashResidentDigits(digits);
+              const existsInEmployees = employeeIdSet.has(employeeId);
+              upsertMapping(residentHash, employeeId, existsInEmployees);
+              oracleHashCount += 1;
+            });
+          }
+        } catch (oracleError) {
+          console.error("Oracle 주민등록번호 조회 실패", oracleError);
+        }
+      }
+
+      const results = [];
+      let linkedCount = 0;
+      let noMatchCount = 0;
+      let conflictCount = 0;
+      let missingEmployeeRowCount = 0;
+      let errorCount = 0;
+
+      for (const row of targets) {
+        const residentHash = normalizeString(row.resident_number_hash);
+        const taxYear = row.taxYear;
+
+        if (!residentHash) {
+          noMatchCount += 1;
+          if (includeResults) {
+            results.push({ ok: false, taxYear, reason: "missing_resident_hash" });
+          }
+          continue;
+        }
+
+        if (conflictingHashes.has(residentHash)) {
+          conflictCount += 1;
+          if (includeResults) {
+            results.push({ ok: false, taxYear, reason: "ambiguous_match" });
+          }
+          continue;
+        }
+
+        const mapping = residentHashToEmployee.get(residentHash);
+        if (!mapping) {
+          noMatchCount += 1;
+          if (includeResults) {
+            results.push({ ok: false, taxYear, reason: "no_employee_match" });
+          }
+          continue;
+        }
+
+        if (!mapping.existsInEmployees) {
+          missingEmployeeRowCount += 1;
+          if (includeResults) {
+            results.push({
+              ok: false,
+              taxYear,
+              reason: "employee_not_registered",
+              employeeId: mapping.employeeId,
+            });
+          }
+          continue;
+        }
+
+        try {
+          const pdfBytes = Buffer.isBuffer(row.pdf_bytes)
+            ? row.pdf_bytes
+            : Buffer.from(row.pdf_bytes);
+
+          await pool.query(
+            `
+              INSERT INTO withholding_receipts
+                (employee_id, tax_year, work_start_date, resident_number_hash, pdf_bytes)
+              VALUES
+                ($1, $2, $3, $4, $5)
+              ON CONFLICT (employee_id, tax_year)
+              DO UPDATE SET
+                work_start_date = EXCLUDED.work_start_date,
+                resident_number_hash = EXCLUDED.resident_number_hash,
+                pdf_bytes = EXCLUDED.pdf_bytes,
+                uploaded_at = NOW()
+            `,
+            [
+              mapping.employeeId,
+              taxYear,
+              row.work_start_date || null,
+              residentHash,
+              pdfBytes,
+            ]
+          );
+
+          await pool.query(
+            "DELETE FROM withholding_receipts_staged WHERE resident_number_hash = $1 AND tax_year = $2",
+            [residentHash, taxYear]
+          );
+
+          linkedCount += 1;
+          if (includeResults) {
+            results.push({
+              ok: true,
+              taxYear,
+              employeeId: mapping.employeeId,
+            });
+          }
+        } catch (linkError) {
+          errorCount += 1;
+          console.error("원천징수 영수증 자동 매칭 실패", linkError);
+          if (includeResults) {
+            results.push({ ok: false, taxYear, reason: "link_failed" });
+          }
+        }
+      }
+
+      const responsePayload = {
+        taxYear: requestedTaxYear || null,
+        stagedTotalCount: normalizedStaged.length,
+        targetCount: targets.length,
+        linkedCount,
+        remainingStagedCount: Math.max(0, normalizedStaged.length - linkedCount),
+        noMatchCount,
+        conflictCount,
+        missingEmployeeRowCount,
+        errorCount,
+        employeeHashSources: {
+          postgres: postgresHashCount,
+          oracle: oracleHashCount,
+        },
+        oracleUsed: oracleLookupOk,
+      };
+      if (includeResults) {
+        responsePayload.results = results;
+      }
+
+      return res.json(responsePayload);
+    } catch (error) {
+      console.error("원천징수 영수증 자동 매칭 처리 실패", error);
+      return res
+        .status(500)
+        .json({ message: "원천징수 영수증 자동 매칭에 실패했습니다." });
     }
   }
 );

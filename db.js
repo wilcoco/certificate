@@ -48,20 +48,6 @@ if (isDevelopment && !connectionString) {
           return { rows: memoryDB.certificate_issues };
         }
 
-        if (text.includes("FROM withholding_receipts")) {
-          if (text.includes("WHERE employee_id =")) {
-            const employeeId = params[0];
-            const rows = memoryDB.withholding_receipts
-              .filter((item) => item.employee_id === employeeId)
-              .sort((a, b) => (b.tax_year || 0) - (a.tax_year || 0));
-            if (text.includes("LIMIT 1")) {
-              return { rows: rows.length ? [rows[0]] : [] };
-            }
-            return { rows };
-          }
-          return { rows: memoryDB.withholding_receipts };
-        }
-
         if (text.includes("FROM withholding_receipts_staged")) {
           if (text.includes("WHERE resident_number_hash =")) {
             const residentHash = params[0];
@@ -74,6 +60,20 @@ if (isDevelopment && !connectionString) {
             return { rows };
           }
           return { rows: memoryDB.withholding_receipts_staged };
+        }
+
+        if (text.includes("FROM withholding_receipts")) {
+          if (text.includes("WHERE employee_id =")) {
+            const employeeId = params[0];
+            const rows = memoryDB.withholding_receipts
+              .filter((item) => item.employee_id === employeeId)
+              .sort((a, b) => (b.tax_year || 0) - (a.tax_year || 0));
+            if (text.includes("LIMIT 1")) {
+              return { rows: rows.length ? [rows[0]] : [] };
+            }
+            return { rows };
+          }
+          return { rows: memoryDB.withholding_receipts };
         }
 
         if (text.includes("WHERE employee_id =")) {
@@ -104,6 +104,31 @@ if (isDevelopment && !connectionString) {
           return { rows: [newIssue] };
         }
 
+        if (text.includes("INSERT INTO withholding_receipts_staged")) {
+          const newReceipt = {
+            resident_number_hash: params[0],
+            tax_year: params[1],
+            work_start_date: params[2],
+            pdf_bytes: params[3],
+            uploaded_at: new Date().toISOString(),
+          };
+
+          const existingIndex = memoryDB.withholding_receipts_staged.findIndex(
+            (item) =>
+              item.resident_number_hash === newReceipt.resident_number_hash &&
+              item.tax_year === newReceipt.tax_year
+          );
+          if (existingIndex !== -1) {
+            memoryDB.withholding_receipts_staged[existingIndex] = {
+              ...memoryDB.withholding_receipts_staged[existingIndex],
+              ...newReceipt,
+            };
+            return { rows: [memoryDB.withholding_receipts_staged[existingIndex]] };
+          }
+          memoryDB.withholding_receipts_staged.push(newReceipt);
+          return { rows: [newReceipt] };
+        }
+
         if (text.includes("INSERT INTO withholding_receipts")) {
           const newReceipt = {
             employee_id: params[0],
@@ -127,31 +152,6 @@ if (isDevelopment && !connectionString) {
             return { rows: [memoryDB.withholding_receipts[existingIndex]] };
           }
           memoryDB.withholding_receipts.push(newReceipt);
-          return { rows: [newReceipt] };
-        }
-
-        if (text.includes("INSERT INTO withholding_receipts_staged")) {
-          const newReceipt = {
-            resident_number_hash: params[0],
-            tax_year: params[1],
-            work_start_date: params[2],
-            pdf_bytes: params[3],
-            uploaded_at: new Date().toISOString(),
-          };
-
-          const existingIndex = memoryDB.withholding_receipts_staged.findIndex(
-            (item) =>
-              item.resident_number_hash === newReceipt.resident_number_hash &&
-              item.tax_year === newReceipt.tax_year
-          );
-          if (existingIndex !== -1) {
-            memoryDB.withholding_receipts_staged[existingIndex] = {
-              ...memoryDB.withholding_receipts_staged[existingIndex],
-              ...newReceipt,
-            };
-            return { rows: [memoryDB.withholding_receipts_staged[existingIndex]] };
-          }
-          memoryDB.withholding_receipts_staged.push(newReceipt);
           return { rows: [newReceipt] };
         }
 

@@ -40,6 +40,19 @@ const withholdingLinkTaxYear = document.getElementById("withholdingLinkTaxYear")
 const withholdingLinkStatus = document.getElementById("withholding-link-status");
 const withholdingLinkError = document.getElementById("withholding-link-error");
 
+const withholdingAutoLinkForm = document.getElementById(
+  "withholding-auto-link-form"
+);
+const withholdingAutoLinkTaxYear = document.getElementById(
+  "withholdingAutoLinkTaxYear"
+);
+const withholdingAutoLinkStatus = document.getElementById(
+  "withholding-auto-link-status"
+);
+const withholdingAutoLinkError = document.getElementById(
+  "withholding-auto-link-error"
+);
+
 const state = {
   employee: null,
   certificates: [],
@@ -48,16 +61,17 @@ const state = {
 };
 
 const fetchJson = async (url, options = {}) => {
+  const { timeoutMs = 10000, ...fetchOptions } = options;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   
   try {
     const response = await fetch(url, {
-      ...options,
+      ...fetchOptions,
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        ...options.headers,
+        ...(fetchOptions.headers || {}),
       },
     });
     clearTimeout(timeoutId);
@@ -189,6 +203,67 @@ const loadSession = async () => {
 if (employeeSearch) {
   employeeSearch.addEventListener("input", () => {
     renderEmployees();
+  });
+}
+
+if (withholdingAutoLinkForm) {
+  withholdingAutoLinkForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (withholdingAutoLinkError) withholdingAutoLinkError.textContent = "";
+    if (withholdingAutoLinkStatus) withholdingAutoLinkStatus.textContent = "";
+
+    const taxYearValue = String(withholdingAutoLinkTaxYear?.value || "").trim();
+    const payload = {};
+    if (taxYearValue) {
+      payload.taxYear = taxYearValue;
+    }
+
+    const submitButton = withholdingAutoLinkForm.querySelector("button");
+    const originalButtonText = submitButton?.textContent;
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = "자동 매칭 중...";
+    }
+    if (withholdingAutoLinkStatus) {
+      withholdingAutoLinkStatus.textContent = "자동 매칭 중...";
+    }
+
+    try {
+      const data = await fetchJson("/api/admin/withholding-receipts/auto-link", {
+        method: "POST",
+        body: JSON.stringify(payload),
+        timeoutMs: 60000,
+      });
+
+      const linkedCount = data.linkedCount ?? 0;
+      const targetCount = data.targetCount ?? 0;
+      const noMatchCount = data.noMatchCount ?? 0;
+      const conflictCount = data.conflictCount ?? 0;
+      const missingEmployeeRowCount = data.missingEmployeeRowCount ?? 0;
+      const errorCount = data.errorCount ?? 0;
+
+      if (withholdingAutoLinkStatus) {
+        const yearText = data.taxYear ? ` (귀속연도: ${data.taxYear})` : "";
+        const detail =
+          targetCount
+            ? ` / 대상 ${targetCount}건 (미매칭 ${noMatchCount}건, 충돌 ${conflictCount}건, 사원미등록 ${missingEmployeeRowCount}건, 오류 ${errorCount}건)`
+            : "";
+        withholdingAutoLinkStatus.textContent = `자동 매칭 완료: ${linkedCount}건${yearText}${detail}`;
+      }
+      withholdingAutoLinkForm.reset();
+    } catch (error) {
+      if (withholdingAutoLinkError) {
+        withholdingAutoLinkError.textContent = error.message;
+      }
+      if (withholdingAutoLinkStatus) {
+        withholdingAutoLinkStatus.textContent = "";
+      }
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = originalButtonText;
+      }
+    }
   });
 }
 
