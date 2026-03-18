@@ -341,6 +341,142 @@ const getOraclePool = async () => {
   return oraclePoolPromise;
 };
 
+const fetchOracleEmployeeProfile = async (employeeId) => {
+  const oraclePool = await getOraclePool();
+  if (!oraclePool) return null;
+
+  const employeeTable = normalizeOracleIdentifier(process.env.ORACLE_EMP_TABLE);
+  if (!employeeTable) {
+    throw new Error("Oracle 테이블 설정이 올바르지 않습니다.");
+  }
+
+  const employeeIdColumn = getRequiredOracleIdentifier(
+    process.env.ORACLE_EMP_COL_EMPLOYEE_ID,
+    "BSCSBN"
+  );
+  const employeeNameColumn = getOptionalOracleIdentifier(
+    process.env.ORACLE_EMP_COL_NAME,
+    "BSCNAME"
+  );
+  const employeeResidentNumberColumn = getOptionalOracleIdentifier(
+    process.env.ORACLE_EMP_COL_RESIDENT_NUMBER,
+    "BSCJUMNO"
+  );
+  const employeeJobGroupColumn = getOptionalOracleIdentifier(
+    process.env.ORACLE_EMP_COL_JOB_GROUP,
+    "BSCJGN"
+  );
+
+  let connection;
+  try {
+    connection = await oraclePool.getConnection();
+    const selectFragments = [
+      `TRIM(e.${employeeIdColumn}) AS "employeeId"`,
+      employeeNameColumn
+        ? `e.${employeeNameColumn} AS "name"`
+        : 'NULL AS "name"',
+      employeeResidentNumberColumn
+        ? `e.${employeeResidentNumberColumn} AS "residentNumber"`
+        : 'NULL AS "residentNumber"',
+      employeeJobGroupColumn
+        ? `e.${employeeJobGroupColumn} AS "jobGroup"`
+        : 'NULL AS "jobGroup"',
+    ];
+
+    const result = await connection.execute(
+      `
+        SELECT
+          ${selectFragments.join(",\n          ")}
+        FROM ${employeeTable} e
+        WHERE TRIM(e.${employeeIdColumn}) = :employeeId
+      `,
+      { employeeId },
+      { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    );
+
+    const row = result.rows?.[0] || null;
+    if (!row) return null;
+    row.name = await readOracleTextValue(row.name);
+    row.residentNumber = await readOracleTextValue(row.residentNumber);
+    row.jobGroup = await readOracleTextValue(row.jobGroup);
+    return row;
+  } finally {
+    if (connection) {
+      try {
+        await connection.close();
+      } catch (error) {
+      }
+    }
+  }
+};
+
+const fetchOracleEmployees = async () => {
+  const oraclePool = await getOraclePool();
+  if (!oraclePool) return null;
+
+  const employeeTable = normalizeOracleIdentifier(process.env.ORACLE_EMP_TABLE);
+  if (!employeeTable) {
+    throw new Error("Oracle 테이블 설정이 올바르지 않습니다.");
+  }
+
+  const employeeIdColumn = getRequiredOracleIdentifier(
+    process.env.ORACLE_EMP_COL_EMPLOYEE_ID,
+    "BSCSBN"
+  );
+  const employeeNameColumn = getOptionalOracleIdentifier(
+    process.env.ORACLE_EMP_COL_NAME,
+    "BSCNAME"
+  );
+  const employeeJobGroupColumn = getOptionalOracleIdentifier(
+    process.env.ORACLE_EMP_COL_JOB_GROUP,
+    "BSCJGN"
+  );
+
+  let connection;
+  try {
+    connection = await oraclePool.getConnection();
+    const selectFragments = [
+      `TRIM(e.${employeeIdColumn}) AS "employeeId"`,
+      employeeNameColumn
+        ? `e.${employeeNameColumn} AS "name"`
+        : 'NULL AS "name"',
+      employeeJobGroupColumn
+        ? `e.${employeeJobGroupColumn} AS "team"`
+        : 'NULL AS "team"',
+    ];
+
+    const result = await connection.execute(
+      `
+        SELECT
+          ${selectFragments.join(",\n          ")}
+        FROM ${employeeTable} e
+        ORDER BY TRIM(e.${employeeIdColumn})
+      `,
+      {},
+      { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    );
+
+    const rows = Array.isArray(result.rows) ? result.rows : [];
+    const employees = await Promise.all(
+      rows.map(async (row) => {
+        const employeeIdValue = normalizeString(row.employeeId);
+        const nameValue = normalizeString(await readOracleTextValue(row.name));
+        const teamValue = normalizeString(await readOracleTextValue(row.team));
+        return { employeeId: employeeIdValue, name: nameValue, team: teamValue };
+      })
+    );
+
+    return employees.filter((record) => record.employeeId);
+  } finally {
+    if (connection) {
+      try {
+        await connection.close();
+      } catch (error) {
+      }
+    }
+  }
+};
+
 const fetchOracleLoginRecord = async (employeeId) => {
   const oraclePool = await getOraclePool();
   if (!oraclePool) return null;
@@ -369,7 +505,7 @@ const fetchOracleLoginRecord = async (employeeId) => {
   );
   const passwordUserIdColumn = getRequiredOracleIdentifier(
     process.env.ORACLE_PASS_COL_USER_ID,
-    "PWUDSRID"
+    "PWDUSRID"
   );
   const passwordValueColumn = getRequiredOracleIdentifier(
     process.env.ORACLE_PASS_COL_PASSWORD,
@@ -437,6 +573,9 @@ const fetchOracleLoginRecord = async (employeeId) => {
     const row = result.rows?.[0] || null;
     if (!row) return null;
     row.etc6 = await readOracleTextValue(row.etc6);
+    row.name = await readOracleTextValue(row.name);
+    row.residentNumber = await readOracleTextValue(row.residentNumber);
+    row.jobGroup = await readOracleTextValue(row.jobGroup);
     if (fallbackDiagnostics) {
       row.__oracleFallbackDiagnostics = fallbackDiagnostics;
     }
@@ -521,25 +660,75 @@ app.post("/api/login", async (req, res) => {
 
       const oracleName = normalizeString(oracleRecord.name);
       const oracleResidentNumber = normalizeString(oracleRecord.residentNumber);
+      const oracleJobGroup = normalizeString(oracleRecord.jobGroup);
+      let oracleProfile = null;
+      if (!oracleName || !oracleResidentNumber || !oracleJobGroup) {
+        try {
+          oracleProfile = await fetchOracleEmployeeProfile(employeeId);
+        } catch (profileError) {
+          console.error("Oracle 프로필 조회 실패", profileError);
+        }
+      }
+
+      const oracleProfileName = normalizeString(oracleProfile?.name);
+      const oracleProfileResidentNumber = normalizeString(
+        oracleProfile?.residentNumber
+      );
+      const oracleProfileJobGroup = normalizeString(oracleProfile?.jobGroup);
+      const resolvedOracleName = oracleProfileName || oracleName;
+      const resolvedOracleResidentNumber =
+        oracleProfileResidentNumber || oracleResidentNumber;
+      const resolvedOracleTeam = oracleProfileJobGroup || oracleJobGroup;
 
       if (employee) {
+        const mappedEmployee = mapEmployee(employee);
         req.session.employee = {
-          ...mapEmployee(employee),
+          ...mappedEmployee,
           employeeId: normalizeString(employee.employee_id),
-          name: oracleName || mapEmployee(employee).name,
+          name: resolvedOracleName || mappedEmployee.name,
+          team: resolvedOracleTeam || mappedEmployee.team,
           residentNumber:
-            mapEmployee(employee).residentNumber || oracleResidentNumber || "",
+            mappedEmployee.residentNumber || resolvedOracleResidentNumber || "",
         };
+
+        const shouldSyncName =
+          resolvedOracleName && normalizeString(employee.name) !== resolvedOracleName;
+        const shouldSyncTeam =
+          resolvedOracleTeam && normalizeString(employee.team) !== resolvedOracleTeam;
+        if (shouldSyncName || shouldSyncTeam) {
+          try {
+            const fragments = [];
+            const values = [];
+            let idx = 1;
+            if (shouldSyncName) {
+              fragments.push(`name = $${idx}`);
+              values.push(resolvedOracleName);
+              idx += 1;
+            }
+            if (shouldSyncTeam) {
+              fragments.push(`team = $${idx}`);
+              values.push(resolvedOracleTeam);
+              idx += 1;
+            }
+            values.push(employeeId);
+            await pool.query(
+              `UPDATE employees SET ${fragments.join(", ")} WHERE employee_id = $${idx}`,
+              values
+            );
+          } catch (syncError) {
+            console.error("Oracle 프로필 동기화 실패", syncError);
+          }
+        }
       } else {
         req.session.employee = {
           employeeId,
-          name: oracleName || employeeId,
-          team: "",
+          name: resolvedOracleName || employeeId,
+          team: resolvedOracleTeam || "",
           joinDate: "",
           retirementDate: "",
           isAdmin: false,
           address: "",
-          residentNumber: oracleResidentNumber || "",
+          residentNumber: resolvedOracleResidentNumber || "",
         };
       }
 
@@ -608,6 +797,19 @@ app.get("/api/me", requireAuth, async (req, res) => {
     });
   }
 
+  if (isOracleAuthConfigured()) {
+    try {
+      const employees = await fetchOracleEmployees();
+      return res.json({
+        employee: req.session.employee,
+        certificates: certificateLibrary,
+        employees: employees || [],
+      });
+    } catch (error) {
+      console.error("Oracle 사원 목록 조회 실패", error);
+    }
+  }
+
   const { rows } = await pool.query(
     "SELECT employee_id, name, team, join_date, retirement_date, is_admin, address, resident_number FROM employees"
   );
@@ -619,6 +821,15 @@ app.get("/api/me", requireAuth, async (req, res) => {
 });
 
 app.get("/api/employees", requireAuth, requireAdmin, async (req, res) => {
+  if (isOracleAuthConfigured()) {
+    try {
+      const employees = await fetchOracleEmployees();
+      return res.json({ employees: employees || [] });
+    } catch (error) {
+      console.error("Oracle 사원 목록 조회 실패", error);
+    }
+  }
+
   const { rows } = await pool.query(
     "SELECT employee_id, name, team, join_date, retirement_date, is_admin, address, resident_number FROM employees"
   );
@@ -945,7 +1156,7 @@ app.post(
       }
 
       const { rows: employees } = await pool.query(
-        "SELECT employee_id, name FROM employees WHERE employee_id = $1",
+        "SELECT employee_id, name, team FROM employees WHERE employee_id = $1",
         [employeeId]
       );
       const employee = employees[0];
@@ -954,7 +1165,50 @@ app.post(
       }
 
       const actualName = normalizeString(employee.name);
-      if (actualName && actualName !== employeeName) {
+      let oracleNameForValidation = "";
+      let oracleTeamForSync = "";
+      if (isOracleAuthConfigured()) {
+        try {
+          const oracleProfile = await fetchOracleEmployeeProfile(employeeId);
+          oracleNameForValidation = normalizeString(oracleProfile?.name);
+          oracleTeamForSync = normalizeString(oracleProfile?.jobGroup);
+
+          if (oracleNameForValidation && oracleNameForValidation !== employeeName) {
+            return res
+              .status(400)
+              .json({ message: "사번과 이름이 일치하지 않습니다." });
+          }
+
+          const shouldSyncName =
+            oracleNameForValidation && actualName !== oracleNameForValidation;
+          const shouldSyncTeam =
+            oracleTeamForSync && normalizeString(employee.team) !== oracleTeamForSync;
+          if (shouldSyncName || shouldSyncTeam) {
+            const fragments = [];
+            const values = [];
+            let idx = 1;
+            if (shouldSyncName) {
+              fragments.push(`name = $${idx}`);
+              values.push(oracleNameForValidation);
+              idx += 1;
+            }
+            if (shouldSyncTeam) {
+              fragments.push(`team = $${idx}`);
+              values.push(oracleTeamForSync);
+              idx += 1;
+            }
+            values.push(employeeId);
+            await pool.query(
+              `UPDATE employees SET ${fragments.join(", ")} WHERE employee_id = $${idx}`,
+              values
+            );
+          }
+        } catch (oracleError) {
+          console.error("Oracle 프로필 조회 실패", oracleError);
+        }
+      }
+
+      if (!oracleNameForValidation && actualName && actualName !== employeeName) {
         return res.status(400).json({ message: "사번과 이름이 일치하지 않습니다." });
       }
 

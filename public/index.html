@@ -101,44 +101,14 @@
         </section>
 
         <section class="card hidden" id="employee-admin">
-          <h2>사원 정보 입력</h2>
-          <p class="muted">입사일자 · 소속팀 · 퇴직일자를 관리합니다.</p>
-          <form id="employee-form" class="grid-form">
+          <h2>사원 목록</h2>
+          <p class="muted">Oracle 사원 테이블 기준으로 표시됩니다.</p>
+          <div class="grid-form">
             <div>
-              <label for="newEmployeeId">사번</label>
-              <input id="newEmployeeId" name="employeeId" type="text" required inputmode="numeric" pattern="\s*[0-9]+\s*" />
+              <label for="employee-search">검색</label>
+              <input id="employee-search" name="employeeSearch" type="text" placeholder="사번 또는 이름" />
             </div>
-            <div>
-              <label for="newPassword">비밀번호</label>
-              <input id="newPassword" name="password" type="password" required />
-            </div>
-            <div>
-              <label for="newName">이름</label>
-              <input id="newName" name="name" type="text" required />
-            </div>
-            <div>
-              <label for="newTeam">소속팀</label>
-              <input id="newTeam" name="team" type="text" required />
-            </div>
-            <div>
-              <label for="newAddress">주소</label>
-              <input id="newAddress" name="address" type="text" />
-            </div>
-            <div>
-              <label for="newResidentNumber">주민등록번호</label>
-              <input id="newResidentNumber" name="residentNumber" type="text" placeholder="000000-0000000" />
-            </div>
-            <div>
-              <label for="newJoinDate">입사일자</label>
-              <input id="newJoinDate" name="joinDate" type="date" required />
-            </div>
-            <div>
-              <label for="newRetirementDate">퇴직일자</label>
-              <input id="newRetirementDate" name="retirementDate" type="date" />
-            </div>
-            <button type="submit" class="primary">사원 추가</button>
-          </form>
-          <p class="error" id="employee-error"></p>
+          </div>
 
           <div class="table-wrap">
             <table>
@@ -147,11 +117,6 @@
                   <th>사번</th>
                   <th>이름</th>
                   <th>소속팀</th>
-                  <th>주소</th>
-                  <th>주민등록번호</th>
-                  <th>입사일자</th>
-                  <th>퇴직일자</th>
-                  <th>관리</th>
                 </tr>
               </thead>
               <tbody id="employee-table"></tbody>

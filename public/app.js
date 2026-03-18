@@ -12,6 +12,7 @@ const employeeAdmin = document.getElementById("employee-admin");
 const employeeForm = document.getElementById("employee-form");
 const employeeError = document.getElementById("employee-error");
 const employeeTable = document.getElementById("employee-table");
+const employeeSearch = document.getElementById("employee-search");
 const adminBadge = document.getElementById("admin-badge");
 const maskResidentNumberToggle = document.getElementById("mask-resident-number");
 
@@ -104,26 +105,23 @@ const renderEmployees = () => {
   if (!employeeTable) return;
   employeeTable.innerHTML = "";
 
-  state.employees.forEach((record) => {
+  const query = String(employeeSearch?.value || "")
+    .trim()
+    .toLowerCase();
+  const filteredEmployees = query
+    ? state.employees.filter((record) => {
+        const id = String(record.employeeId || "").toLowerCase();
+        const name = String(record.name || "").toLowerCase();
+        return id.includes(query) || name.includes(query);
+      })
+    : state.employees;
+
+  filteredEmployees.forEach((record) => {
     const row = document.createElement("tr");
     row.innerHTML = `
       <td>${record.employeeId}</td>
       <td>${record.name}</td>
       <td>${record.team}</td>
-      <td>${record.address || "-"}</td>
-      <td>${record.residentNumber || "-"}</td>
-      <td>${record.joinDate}</td>
-      <td>${record.retirementDate || "-"}</td>
-      <td>
-        <div class="action-group">
-          <button class="secondary" data-action="edit" data-id="${record.employeeId}">
-            수정
-          </button>
-          <button class="primary" data-action="delete" data-id="${record.employeeId}">
-            삭제
-          </button>
-        </div>
-      </td>
     `;
     employeeTable.appendChild(row);
   });
@@ -188,6 +186,12 @@ const loadSession = async () => {
   }
 };
 
+if (employeeSearch) {
+  employeeSearch.addEventListener("input", () => {
+    renderEmployees();
+  });
+}
+
 loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   loginError.textContent = "";
@@ -217,98 +221,14 @@ loginForm.addEventListener("submit", async (event) => {
   }
 });
 
-employeeForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  employeeError.textContent = "";
-
-  const formData = new FormData(employeeForm);
-  const payload = Object.fromEntries(formData.entries());
-  Object.keys(payload).forEach((key) => {
-    if (typeof payload[key] === "string") {
-      payload[key] = payload[key].trim();
+if (employeeForm) {
+  employeeForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (employeeError) {
+      employeeError.textContent = "";
     }
   });
-  const editingId = employeeForm.dataset.editing;
-
-  try {
-    if (editingId) {
-      const data = await fetchJson(`/api/employees/${editingId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      state.employees = state.employees.map((record) =>
-        record.employeeId === editingId ? data.employee : record
-      );
-    } else {
-      const data = await fetchJson("/api/employees", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      state.employees = [...state.employees, data.employee];
-    }
-    renderEmployees();
-    employeeForm.reset();
-  } catch (error) {
-    employeeError.textContent = error.message;
-  }
-});
-
-employeeTable.addEventListener("click", async (event) => {
-  const button = event.target.closest("button[data-action]");
-  if (!button) return;
-
-  const { action, id } = button.dataset;
-  if (action === "delete") {
-    if (!confirm("정말 삭제하시겠습니까?")) return;
-    try {
-      button.textContent = "삭제 중...";
-      button.disabled = true;
-      await fetchJson(`/api/employees/${id}`, { method: "DELETE" });
-      state.employees = state.employees.filter(
-        (record) => record.employeeId !== id
-      );
-      renderEmployees();
-    } catch (error) {
-      employeeError.textContent = error.message;
-    }
-    return;
-  }
-
-  if (action === "edit") {
-    const record = state.employees.find((item) => item.employeeId === id);
-    if (!record) return;
-
-    employeeForm.employeeId.value = record.employeeId;
-    employeeForm.password.value = "";
-    employeeForm.name.value = record.name;
-    employeeForm.team.value = record.team;
-    employeeForm.address.value = record.address || "";
-    employeeForm.residentNumber.value = record.residentNumber || "";
-    employeeForm.joinDate.value = record.joinDate;
-    employeeForm.retirementDate.value = record.retirementDate || "";
-
-    employeeForm.dataset.editing = id;
-    employeeForm.querySelector("button").textContent = "사원 수정";
-
-    document.getElementById("newEmployeeId").disabled = true;
-    document.getElementById("newPassword").required = false;
-    
-    // 모바일에서 폼 위치로 스크롤
-    employeeForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
-});
-
-employeeForm.addEventListener("reset", () => {
-  employeeForm.dataset.editing = "";
-  const button = employeeForm.querySelector("button");
-  if (button) button.textContent = "사원 추가";
-
-  document.getElementById("newEmployeeId").disabled = false;
-  document.getElementById("newPassword").required = true;
-});
+}
 
 certificateList.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-id]");
@@ -523,4 +443,3 @@ if (withholdingLinkForm) {
   });
 }
 
-loadSession();
