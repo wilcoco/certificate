@@ -160,10 +160,12 @@ const renderEmployees = () => {
 
   filteredEmployees.forEach((record) => {
     const row = document.createElement("tr");
+    const pts = record.points != null ? Number(record.points).toLocaleString() : "0";
     row.innerHTML = `
       <td>${record.employeeId}</td>
       <td>${record.name}</td>
       <td>${record.team}</td>
+      <td>${pts}P</td>
     `;
     employeeTable.appendChild(row);
   });

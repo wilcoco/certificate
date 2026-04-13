@@ -867,10 +867,17 @@ app.get("/api/me", requireAuth, async (req, res) => {
   if (isOracleAuthConfigured()) {
     try {
       const employees = await fetchOracleEmployees();
+      // Postgres 포인트 병합
+      const { rows: pgRows } = await pool.query("SELECT employee_id, points FROM employees");
+      const pointsMap = new Map(pgRows.map((r) => [r.employee_id, r.points || 0]));
+      const merged = (employees || []).map((e) => ({
+        ...e,
+        points: pointsMap.get(e.employeeId) ?? 0,
+      }));
       return res.json({
         employee: req.session.employee,
         certificates: certificateLibrary,
-        employees: employees || [],
+        employees: merged,
       });
     } catch (error) {
       console.error("Oracle 사원 목록 조회 실패", error);
@@ -878,12 +885,12 @@ app.get("/api/me", requireAuth, async (req, res) => {
   }
 
   const { rows } = await pool.query(
-    "SELECT employee_id, name, team, join_date, retirement_date, is_admin, address, resident_number FROM employees"
+    "SELECT employee_id, name, team, join_date, retirement_date, is_admin, address, resident_number, points FROM employees"
   );
   return res.json({
     employee: req.session.employee,
     certificates: certificateLibrary,
-    employees: rows.map(mapEmployee),
+    employees: rows.map((r) => ({ ...mapEmployee(r), points: r.points || 0 })),
   });
 });
 
@@ -891,16 +898,22 @@ app.get("/api/employees", requireAuth, requireAdmin, async (req, res) => {
   if (isOracleAuthConfigured()) {
     try {
       const employees = await fetchOracleEmployees();
-      return res.json({ employees: employees || [] });
+      const { rows: pgRows } = await pool.query("SELECT employee_id, points FROM employees");
+      const pointsMap = new Map(pgRows.map((r) => [r.employee_id, r.points || 0]));
+      const merged = (employees || []).map((e) => ({
+        ...e,
+        points: pointsMap.get(e.employeeId) ?? 0,
+      }));
+      return res.json({ employees: merged });
     } catch (error) {
       console.error("Oracle 사원 목록 조회 실패", error);
     }
   }
 
   const { rows } = await pool.query(
-    "SELECT employee_id, name, team, join_date, retirement_date, is_admin, address, resident_number FROM employees"
+    "SELECT employee_id, name, team, join_date, retirement_date, is_admin, address, resident_number, points FROM employees"
   );
-  return res.json({ employees: rows.map(mapEmployee) });
+  return res.json({ employees: rows.map((r) => ({ ...mapEmployee(r), points: r.points || 0 })) });
 });
 
 app.post("/api/employees", requireAuth, requireAdmin, async (req, res) => {
