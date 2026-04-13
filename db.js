@@ -16,6 +16,10 @@ if (isDevelopment && !connectionString) {
     certificate_issues: [],
     withholding_receipts: [],
     withholding_receipts_staged: [],
+    shop_products: [],
+    shop_orders: [],
+    _nextProductId: 1,
+    _nextOrderId: 1,
     query: async (text, params) => {
       const safeParams = (params || []).map((value) => {
         if (Buffer.isBuffer(value)) {
@@ -74,6 +78,29 @@ if (isDevelopment && !connectionString) {
             return { rows };
           }
           return { rows: memoryDB.withholding_receipts };
+        }
+
+        if (text.includes("FROM shop_products")) {
+          if (text.includes("WHERE id =")) {
+            const id = Number(params[0]);
+            const product = memoryDB.shop_products.find(p => p.id === id);
+            return { rows: product ? [product] : [] };
+          }
+          if (text.includes("active = TRUE") || text.includes("active = true")) {
+            return { rows: memoryDB.shop_products.filter(p => p.active !== false) };
+          }
+          return { rows: memoryDB.shop_products };
+        }
+
+        if (text.includes("FROM shop_orders")) {
+          if (text.includes("WHERE") && text.includes("employee_id")) {
+            const employeeId = params[0];
+            const orders = memoryDB.shop_orders
+              .filter(o => o.employee_id === employeeId)
+              .sort((a, b) => new Date(b.ordered_at) - new Date(a.ordered_at));
+            return { rows: orders };
+          }
+          return { rows: [...memoryDB.shop_orders].sort((a, b) => new Date(b.ordered_at) - new Date(a.ordered_at)) };
         }
 
         if (text.includes("WHERE employee_id =")) {
@@ -155,6 +182,36 @@ if (isDevelopment && !connectionString) {
           return { rows: [newReceipt] };
         }
 
+        if (text.includes("INSERT INTO shop_products")) {
+          const newProduct = {
+            id: memoryDB._nextProductId++,
+            name: params[0],
+            description: params[1] || '',
+            image_url: params[2] || '',
+            point_price: params[3],
+            category: params[4] || '',
+            stock: params[5] ?? -1,
+            active: true,
+            created_at: new Date().toISOString(),
+          };
+          memoryDB.shop_products.push(newProduct);
+          return { rows: [newProduct] };
+        }
+
+        if (text.includes("INSERT INTO shop_orders")) {
+          const newOrder = {
+            id: memoryDB._nextOrderId++,
+            employee_id: params[0],
+            product_id: params[1],
+            product_name: params[2],
+            point_cost: params[3],
+            quantity: params[4] || 1,
+            ordered_at: new Date().toISOString(),
+          };
+          memoryDB.shop_orders.push(newOrder);
+          return { rows: [newOrder] };
+        }
+
         if (text.includes("INSERT INTO employees")) {
           const newEmployee = {
             employee_id: params[0],
@@ -175,6 +232,46 @@ if (isDevelopment && !connectionString) {
       }
       
       if (text.includes("UPDATE")) {
+        if (text.includes("UPDATE shop_products")) {
+          const id = Number(params[params.length - 1]);
+          const index = memoryDB.shop_products.findIndex(p => p.id === id);
+          if (index !== -1) {
+            memoryDB.shop_products[index] = {
+              ...memoryDB.shop_products[index],
+              name: params[0] ?? memoryDB.shop_products[index].name,
+              description: params[1] ?? memoryDB.shop_products[index].description,
+              image_url: params[2] ?? memoryDB.shop_products[index].image_url,
+              point_price: params[3] ?? memoryDB.shop_products[index].point_price,
+              category: params[4] ?? memoryDB.shop_products[index].category,
+              stock: params[5] ?? memoryDB.shop_products[index].stock,
+              active: params[6] ?? memoryDB.shop_products[index].active,
+            };
+            return { rows: [memoryDB.shop_products[index]] };
+          }
+          return { rows: [] };
+        }
+
+        if (text.includes("UPDATE employees") && text.includes("SET points")) {
+          if (text.includes("points -")) {
+            const amount = Number(params[0]);
+            const employeeId = params[1];
+            const index = memoryDB.employees.findIndex(emp => emp.employee_id === employeeId);
+            if (index !== -1 && (memoryDB.employees[index].points || 0) >= amount) {
+              memoryDB.employees[index].points = (memoryDB.employees[index].points || 0) - amount;
+              return { rows: [{ points: memoryDB.employees[index].points }] };
+            }
+            return { rows: [] };
+          }
+          const points = Number(params[0]);
+          const employeeId = params[1];
+          const index = memoryDB.employees.findIndex(emp => emp.employee_id === employeeId);
+          if (index !== -1) {
+            memoryDB.employees[index].points = points;
+            return { rows: [memoryDB.employees[index]] };
+          }
+          return { rows: [] };
+        }
+
         if (!text.includes("UPDATE employees")) {
           return { rows: [] };
         }
@@ -208,6 +305,16 @@ if (isDevelopment && !connectionString) {
           );
           if (index !== -1) {
             const deleted = memoryDB.withholding_receipts_staged.splice(index, 1)[0];
+            return { rows: [deleted] };
+          }
+          return { rows: [] };
+        }
+
+        if (text.includes("DELETE FROM shop_products")) {
+          const id = Number(params[0]);
+          const index = memoryDB.shop_products.findIndex(p => p.id === id);
+          if (index !== -1) {
+            const deleted = memoryDB.shop_products.splice(index, 1)[0];
             return { rows: [deleted] };
           }
           return { rows: [] };
@@ -252,6 +359,7 @@ const seedEmployees = [
     isAdmin: true,
     address: "",
     residentNumber: "",
+    points: 100000,
   },
   {
     employeeId: "1002",
@@ -263,6 +371,7 @@ const seedEmployees = [
     isAdmin: false,
     address: "",
     residentNumber: "",
+    points: 50000,
   },
   {
     employeeId: "1003",
@@ -274,6 +383,7 @@ const seedEmployees = [
     isAdmin: false,
     address: "",
     residentNumber: "",
+    points: 50000,
   },
 ];
 
@@ -291,6 +401,7 @@ const initSchema = async () => {
         is_admin: employee.isAdmin,
         address: employee.address,
         resident_number: employee.residentNumber,
+        points: employee.points || 0,
       });
     });
     console.log("시드 데이터가 추가되었습니다.");
@@ -349,6 +460,36 @@ const initSchema = async () => {
     )
   `);
 
+  await pool.query(
+    `ALTER TABLE employees ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0`
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shop_products (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      image_url TEXT DEFAULT '',
+      point_price INTEGER NOT NULL,
+      category TEXT DEFAULT '',
+      stock INTEGER DEFAULT -1,
+      active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shop_orders (
+      id SERIAL PRIMARY KEY,
+      employee_id TEXT NOT NULL REFERENCES employees(employee_id),
+      product_id INTEGER NOT NULL,
+      product_name TEXT NOT NULL,
+      point_cost INTEGER NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 1,
+      ordered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
   const { rows } = await pool.query("SELECT COUNT(*)::int AS count FROM employees");
   if (rows[0].count === 0) {
     const insertText = `
@@ -389,6 +530,7 @@ const mapEmployee = (row) => ({
       : row.retirement_date
     : "",
   isAdmin: row.is_admin,
+  points: row.points || 0,
 });
 
 module.exports = {

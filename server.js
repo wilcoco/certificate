@@ -2030,6 +2030,343 @@ app.get("/verify/:documentNumber", async (req, res) => {
   }
 });
 
+// ======== 복지 포인트 쇼핑몰 API ========
+
+// 상품 목록 (로그인 사용자)
+app.get("/api/products", requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      "SELECT * FROM shop_products WHERE active = TRUE ORDER BY category, name"
+    );
+    return res.json({ products: rows });
+  } catch (error) {
+    console.error("상품 목록 조회 실패", error);
+    return res.status(500).json({ message: "상품 목록을 불러올 수 없습니다." });
+  }
+});
+
+// 내 포인트 조회
+app.get("/api/points/me", requireAuth, async (req, res) => {
+  try {
+    const employeeId = req.session.employee.employeeId;
+    const { rows } = await pool.query(
+      "SELECT points FROM employees WHERE employee_id = $1",
+      [employeeId]
+    );
+    return res.json({ points: rows[0]?.points || 0 });
+  } catch (error) {
+    console.error("포인트 조회 실패", error);
+    return res.status(500).json({ message: "포인트를 조회할 수 없습니다." });
+  }
+});
+
+// 내 주문 내역
+app.get("/api/orders/me", requireAuth, async (req, res) => {
+  try {
+    const employeeId = req.session.employee.employeeId;
+    const { rows } = await pool.query(
+      "SELECT * FROM shop_orders WHERE employee_id = $1 ORDER BY ordered_at DESC",
+      [employeeId]
+    );
+    return res.json({ orders: rows });
+  } catch (error) {
+    console.error("주문 내역 조회 실패", error);
+    return res.status(500).json({ message: "주문 내역을 조회할 수 없습니다." });
+  }
+});
+
+// 상품 구매 (포인트 차감)
+app.post("/api/orders", requireAuth, async (req, res) => {
+  try {
+    const employeeId = req.session.employee.employeeId;
+    const productId = Number(req.body.productId);
+    const quantity = Math.max(1, Number(req.body.quantity) || 1);
+
+    if (!Number.isFinite(productId) || productId <= 0) {
+      return res.status(400).json({ message: "올바른 상품을 선택해주세요." });
+    }
+
+    const { rows: productRows } = await pool.query(
+      "SELECT * FROM shop_products WHERE id = $1",
+      [productId]
+    );
+    if (!productRows.length || productRows[0].active === false) {
+      return res.status(404).json({ message: "상품을 찾을 수 없습니다." });
+    }
+    const product = productRows[0];
+    const totalCost = product.point_price * quantity;
+
+    // 재고 확인 (stock -1 = 무제한)
+    if (product.stock >= 0 && product.stock < quantity) {
+      return res.status(400).json({ message: "재고가 부족합니다." });
+    }
+
+    // 포인트 차감 (atomic)
+    const { rows: updateRows } = await pool.query(
+      "UPDATE employees SET points = points - $1 WHERE employee_id = $2 AND points >= $1 RETURNING points",
+      [totalCost, employeeId]
+    );
+    if (!updateRows.length) {
+      return res.status(400).json({ message: "포인트가 부족합니다." });
+    }
+
+    // 재고 차감
+    if (product.stock >= 0) {
+      await pool.query(
+        "UPDATE shop_products SET stock = stock - $1 WHERE id = $2",
+        [quantity, productId]
+      );
+    }
+
+    // 주문 생성
+    const { rows: orderRows } = await pool.query(
+      "INSERT INTO shop_orders (employee_id, product_id, product_name, point_cost, quantity) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+      [employeeId, productId, product.name, totalCost, quantity]
+    );
+
+    return res.json({
+      order: orderRows[0],
+      remainingPoints: updateRows[0].points,
+    });
+  } catch (error) {
+    console.error("상품 구매 실패", error);
+    return res.status(500).json({ message: "구매 처리에 실패했습니다." });
+  }
+});
+
+// ======== 관리자: 상품 관리 ========
+
+app.get("/api/admin/products", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT * FROM shop_products ORDER BY id");
+    return res.json({ products: rows });
+  } catch (error) {
+    console.error("상품 목록 조회 실패", error);
+    return res.status(500).json({ message: "상품 목록을 불러올 수 없습니다." });
+  }
+});
+
+app.post("/api/admin/products", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { name, description, imageUrl, pointPrice, category, stock } = req.body;
+    if (!name || !pointPrice) {
+      return res.status(400).json({ message: "상품명과 포인트 가격은 필수입니다." });
+    }
+    const { rows } = await pool.query(
+      "INSERT INTO shop_products (name, description, image_url, point_price, category, stock) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
+      [name, description || "", imageUrl || "", Number(pointPrice), category || "", stock ?? -1]
+    );
+    return res.status(201).json({ product: rows[0] });
+  } catch (error) {
+    console.error("상품 등록 실패", error);
+    return res.status(500).json({ message: "상품 등록에 실패했습니다." });
+  }
+});
+
+app.put("/api/admin/products/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name, description, imageUrl, pointPrice, category, stock, active } = req.body;
+    const { rows } = await pool.query(
+      "UPDATE shop_products SET name=$1, description=$2, image_url=$3, point_price=$4, category=$5, stock=$6, active=$7 WHERE id=$8 RETURNING *",
+      [name, description || "", imageUrl || "", Number(pointPrice), category || "", stock ?? -1, active ?? true, id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: "상품을 찾을 수 없습니다." });
+    }
+    return res.json({ product: rows[0] });
+  } catch (error) {
+    console.error("상품 수정 실패", error);
+    return res.status(500).json({ message: "상품 수정에 실패했습니다." });
+  }
+});
+
+app.delete("/api/admin/products/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { rows } = await pool.query(
+      "DELETE FROM shop_products WHERE id = $1 RETURNING *",
+      [id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: "상품을 찾을 수 없습니다." });
+    }
+    return res.json({ deleted: true });
+  } catch (error) {
+    console.error("상품 삭제 실패", error);
+    return res.status(500).json({ message: "상품 삭제에 실패했습니다." });
+  }
+});
+
+// 관리자: CSV로 상품 일괄 등록 (Wix 내보내기 호환)
+app.post(
+  "/api/admin/products/import-csv",
+  requireAuth,
+  requireAdmin,
+  upload.single("file"),
+  async (req, res) => {
+    try {
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ message: "CSV 파일을 업로드해주세요." });
+      }
+
+      const csvText = file.buffer.toString("utf-8");
+      const lines = csvText
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      if (lines.length < 2) {
+        return res.status(400).json({ message: "CSV에 데이터가 없습니다." });
+      }
+
+      const headerLine = lines[0];
+      const headers = headerLine.split(",").map((h) => h.trim().toLowerCase());
+
+      const nameIdx = headers.findIndex((h) => h === "name" || h === "상품명");
+      const descIdx = headers.findIndex((h) => h === "description" || h === "설명");
+      const imageIdx = headers.findIndex((h) => h === "image_url" || h === "이미지" || h === "image");
+      const priceIdx = headers.findIndex((h) => h === "point_price" || h === "price" || h === "포인트" || h === "가격");
+      const categoryIdx = headers.findIndex((h) => h === "category" || h === "카테고리");
+      const stockIdx = headers.findIndex((h) => h === "stock" || h === "재고");
+
+      if (nameIdx === -1 || priceIdx === -1) {
+        return res
+          .status(400)
+          .json({ message: "CSV에 상품명(name)과 가격(price/point_price) 컬럼이 필요합니다." });
+      }
+
+      let importedCount = 0;
+      let skippedCount = 0;
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(",").map((c) => c.trim());
+        const productName = cols[nameIdx];
+        const priceRaw = cols[priceIdx];
+        const price = Number(String(priceRaw).replace(/[^0-9]/g, ""));
+
+        if (!productName || !Number.isFinite(price) || price <= 0) {
+          skippedCount++;
+          continue;
+        }
+
+        await pool.query(
+          "INSERT INTO shop_products (name, description, image_url, point_price, category, stock) VALUES ($1, $2, $3, $4, $5, $6)",
+          [
+            productName,
+            descIdx >= 0 ? cols[descIdx] || "" : "",
+            imageIdx >= 0 ? cols[imageIdx] || "" : "",
+            price,
+            categoryIdx >= 0 ? cols[categoryIdx] || "" : "",
+            stockIdx >= 0 ? Number(cols[stockIdx]) || -1 : -1,
+          ]
+        );
+        importedCount++;
+      }
+
+      return res.json({ importedCount, skippedCount });
+    } catch (error) {
+      console.error("상품 CSV 가져오기 실패", error);
+      return res.status(500).json({ message: "CSV 가져오기에 실패했습니다." });
+    }
+  }
+);
+
+// ======== 관리자: 포인트 관리 ========
+
+app.get("/api/admin/points", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      "SELECT employee_id, name, points FROM employees ORDER BY employee_id"
+    );
+    return res.json({
+      employees: rows.map((r) => ({
+        employeeId: r.employee_id,
+        name: r.name,
+        points: r.points || 0,
+      })),
+    });
+  } catch (error) {
+    console.error("포인트 목록 조회 실패", error);
+    return res.status(500).json({ message: "포인트 목록을 불러올 수 없습니다." });
+  }
+});
+
+app.post("/api/admin/points", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const employeeId = normalizeString(req.body.employeeId);
+    const points = Number(req.body.points);
+
+    if (!employeeId || !Number.isFinite(points) || points < 0) {
+      return res.status(400).json({ message: "사번과 올바른 포인트를 입력해주세요." });
+    }
+
+    const { rows } = await pool.query(
+      "UPDATE employees SET points = $1 WHERE employee_id = $2 RETURNING *",
+      [points, employeeId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: "사원을 찾을 수 없습니다." });
+    }
+    return res.json({ employee: mapEmployee(rows[0]) });
+  } catch (error) {
+    console.error("포인트 부여 실패", error);
+    return res.status(500).json({ message: "포인트 부여에 실패했습니다." });
+  }
+});
+
+// 관리자: 전체 사원에게 일괄 포인트 부여
+app.post("/api/admin/points/bulk", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const points = Number(req.body.points);
+    if (!Number.isFinite(points) || points < 0) {
+      return res.status(400).json({ message: "올바른 포인트를 입력해주세요." });
+    }
+
+    const { rows: employees } = await pool.query(
+      "SELECT employee_id FROM employees"
+    );
+    let updatedCount = 0;
+    for (const emp of employees) {
+      await pool.query(
+        "UPDATE employees SET points = $1 WHERE employee_id = $2",
+        [points, emp.employee_id]
+      );
+      updatedCount++;
+    }
+    return res.json({ updatedCount, points });
+  } catch (error) {
+    console.error("일괄 포인트 부여 실패", error);
+    return res.status(500).json({ message: "일괄 포인트 부여에 실패했습니다." });
+  }
+});
+
+// ======== 관리자: 주문 내역 ========
+
+app.get("/api/admin/orders", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows: orders } = await pool.query(
+      "SELECT * FROM shop_orders ORDER BY ordered_at DESC"
+    );
+    // 사원명 매핑
+    const { rows: employees } = await pool.query(
+      "SELECT employee_id, name FROM employees"
+    );
+    const nameMap = new Map(employees.map((e) => [e.employee_id, e.name]));
+
+    const enriched = orders.map((o) => ({
+      ...o,
+      employee_name: nameMap.get(o.employee_id) || o.employee_id,
+    }));
+
+    return res.json({ orders: enriched });
+  } catch (error) {
+    console.error("주문 목록 조회 실패", error);
+    return res.status(500).json({ message: "주문 목록을 불러올 수 없습니다." });
+  }
+});
+
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });

@@ -100,6 +100,29 @@
           <div class="certificates" id="certificate-list"></div>
         </section>
 
+        <section class="card hidden" id="shop-section">
+          <div class="dashboard__header">
+            <h2>복지 포인트몰</h2>
+            <div class="point-badge" id="my-points-badge">0 P</div>
+          </div>
+          <p class="muted">보유 포인트 내에서 상품을 선택하세요.</p>
+          <div class="shop-products" id="shop-product-list"></div>
+          <h3 style="margin-top:24px">내 주문 내역</h3>
+          <div class="table-wrap" id="my-orders-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>상품</th>
+                  <th>포인트</th>
+                  <th>수량</th>
+                  <th>일시</th>
+                </tr>
+              </thead>
+              <tbody id="my-orders-table"></tbody>
+            </table>
+          </div>
+        </section>
+
         <section class="card hidden" id="employee-admin">
           <h2>사원 목록</h2>
           <p class="muted">Oracle 사원 테이블 기준으로 표시됩니다.</p>
@@ -168,6 +191,107 @@
           </form>
           <p class="helper" id="withholding-link-status"></p>
           <p class="error" id="withholding-link-error"></p>
+
+          <h2>복지몰 상품 관리</h2>
+          <p class="muted">CSV 가져오기 또는 개별 등록</p>
+          <form id="shop-csv-import-form">
+            <label for="shopCsvFile">CSV 파일</label>
+            <input id="shopCsvFile" name="file" type="file" required accept=".csv,text/csv" />
+            <button type="submit" class="primary">CSV 가져오기</button>
+            <p class="helper">헤더: name(상품명), price(포인트/가격), description(설명), image_url(이미지), category(카테고리), stock(재고)</p>
+          </form>
+          <p class="helper" id="shop-csv-import-status"></p>
+          <p class="error" id="shop-csv-import-error"></p>
+
+          <form id="shop-add-product-form" class="grid-form" style="margin-top:16px">
+            <div>
+              <label for="shopProductName">상품명</label>
+              <input id="shopProductName" name="name" type="text" required placeholder="상품명" />
+            </div>
+            <div>
+              <label for="shopProductPrice">포인트 가격</label>
+              <input id="shopProductPrice" name="pointPrice" type="number" required inputmode="numeric" placeholder="예: 5000" />
+            </div>
+            <div>
+              <label for="shopProductCategory">카테고리</label>
+              <input id="shopProductCategory" name="category" type="text" placeholder="선택" />
+            </div>
+            <div>
+              <label for="shopProductImage">이미지 URL</label>
+              <input id="shopProductImage" name="imageUrl" type="text" placeholder="https://..." />
+            </div>
+            <div>
+              <label for="shopProductDesc">설명</label>
+              <input id="shopProductDesc" name="description" type="text" placeholder="선택" />
+            </div>
+            <div>
+              <label for="shopProductStock">재고 (-1=무제한)</label>
+              <input id="shopProductStock" name="stock" type="number" inputmode="numeric" value="-1" />
+            </div>
+            <button type="submit" class="primary">상품 등록</button>
+          </form>
+          <p class="helper" id="shop-add-product-status"></p>
+          <p class="error" id="shop-add-product-error"></p>
+
+          <div class="table-wrap" id="admin-products-wrap" style="margin-top:16px">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>상품명</th>
+                  <th>포인트</th>
+                  <th>재고</th>
+                  <th>상태</th>
+                </tr>
+              </thead>
+              <tbody id="admin-products-table"></tbody>
+            </table>
+          </div>
+
+          <h2 style="margin-top:24px">포인트 관리</h2>
+          <p class="muted">사번별 포인트 부여</p>
+          <form id="shop-point-form" class="grid-form">
+            <div>
+              <label for="pointEmployeeId">사번</label>
+              <input id="pointEmployeeId" name="employeeId" type="text" required inputmode="numeric" placeholder="사번" />
+            </div>
+            <div>
+              <label for="pointAmount">포인트</label>
+              <input id="pointAmount" name="points" type="number" required inputmode="numeric" placeholder="예: 50000" />
+            </div>
+            <button type="submit" class="primary">포인트 설정</button>
+          </form>
+          <p class="helper" id="shop-point-status"></p>
+          <p class="error" id="shop-point-error"></p>
+
+          <form id="shop-point-bulk-form" class="grid-form" style="margin-top:12px">
+            <div>
+              <label for="pointBulkAmount">전체 일괄 포인트</label>
+              <input id="pointBulkAmount" name="points" type="number" required inputmode="numeric" placeholder="전 사원 동일 포인트" />
+            </div>
+            <button type="submit" class="primary">전체 일괄 부여</button>
+          </form>
+          <p class="helper" id="shop-point-bulk-status"></p>
+          <p class="error" id="shop-point-bulk-error"></p>
+
+          <h2 style="margin-top:24px">주문 내역 (전체)</h2>
+          <p class="muted">사원별 구매 목록</p>
+          <button class="ghost" id="admin-orders-refresh" style="margin-bottom:12px">새로고침</button>
+          <div class="table-wrap" id="admin-orders-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>사번</th>
+                  <th>이름</th>
+                  <th>상품</th>
+                  <th>포인트</th>
+                  <th>수량</th>
+                  <th>일시</th>
+                </tr>
+              </thead>
+              <tbody id="admin-orders-table"></tbody>
+            </table>
+          </div>
         </section>
       </main>
     </div>

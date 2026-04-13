@@ -53,11 +53,39 @@ const withholdingAutoLinkError = document.getElementById(
   "withholding-auto-link-error"
 );
 
+const shopSection = document.getElementById("shop-section");
+const myPointsBadge = document.getElementById("my-points-badge");
+const shopProductList = document.getElementById("shop-product-list");
+const myOrdersTable = document.getElementById("my-orders-table");
+
+const shopCsvImportForm = document.getElementById("shop-csv-import-form");
+const shopCsvImportStatus = document.getElementById("shop-csv-import-status");
+const shopCsvImportError = document.getElementById("shop-csv-import-error");
+
+const shopAddProductForm = document.getElementById("shop-add-product-form");
+const shopAddProductStatus = document.getElementById("shop-add-product-status");
+const shopAddProductError = document.getElementById("shop-add-product-error");
+const adminProductsTable = document.getElementById("admin-products-table");
+
+const shopPointForm = document.getElementById("shop-point-form");
+const shopPointStatus = document.getElementById("shop-point-status");
+const shopPointError = document.getElementById("shop-point-error");
+
+const shopPointBulkForm = document.getElementById("shop-point-bulk-form");
+const shopPointBulkStatus = document.getElementById("shop-point-bulk-status");
+const shopPointBulkError = document.getElementById("shop-point-bulk-error");
+
+const adminOrdersTable = document.getElementById("admin-orders-table");
+const adminOrdersRefresh = document.getElementById("admin-orders-refresh");
+
 const state = {
   employee: null,
   certificates: [],
   employees: [],
   lastIssued: null,
+  products: [],
+  myOrders: [],
+  myPoints: 0,
 };
 
 const fetchJson = async (url, options = {}) => {
@@ -191,9 +219,12 @@ const loadSession = async () => {
     state.employees = data.employees || [];
     renderDashboard();
     renderEmployees();
+    loadShop();
     if (state.employee.isAdmin) {
       employeeAdmin.classList.remove("hidden");
       adminBadge.classList.remove("hidden");
+      loadAdminProducts();
+      loadAdminOrders();
     }
   } catch (error) {
     loginCard.classList.remove("hidden");
@@ -287,9 +318,12 @@ loginForm.addEventListener("submit", async (event) => {
     state.employees = sessionData.employees || [];
     renderDashboard();
     renderEmployees();
+    loadShop();
     if (state.employee.isAdmin) {
       employeeAdmin.classList.remove("hidden");
       adminBadge.classList.remove("hidden");
+      loadAdminProducts();
+      loadAdminOrders();
     }
   } catch (error) {
     loginError.textContent = error.message;
@@ -406,8 +440,12 @@ logoutButton.addEventListener("click", async () => {
   state.certificates = [];
   state.employees = [];
   state.lastIssued = null;
+  state.products = [];
+  state.myOrders = [];
+  state.myPoints = 0;
   dashboard.classList.add("hidden");
   employeeAdmin.classList.add("hidden");
+  if (shopSection) shopSection.classList.add("hidden");
   loginCard.classList.remove("hidden");
   loginForm.reset();
 });
@@ -479,6 +517,272 @@ if (withholdingUploadForm) {
       }
     }
   });
+}
+
+// ======== 복지 포인트몰 ========
+
+const formatPoints = (n) => Number(n || 0).toLocaleString("ko-KR") + " P";
+
+const loadShop = async () => {
+  try {
+    const [productsData, pointsData, ordersData] = await Promise.all([
+      fetchJson("/api/products"),
+      fetchJson("/api/points/me"),
+      fetchJson("/api/orders/me"),
+    ]);
+    state.products = productsData.products || [];
+    state.myPoints = pointsData.points || 0;
+    state.myOrders = ordersData.orders || [];
+    renderShop();
+  } catch (error) {
+    console.error("복지몰 로드 실패", error);
+  }
+};
+
+const renderShop = () => {
+  if (!shopSection) return;
+  shopSection.classList.remove("hidden");
+
+  if (myPointsBadge) myPointsBadge.textContent = formatPoints(state.myPoints);
+
+  if (shopProductList) {
+    shopProductList.innerHTML = "";
+    if (!state.products.length) {
+      shopProductList.innerHTML = '<div class="shop-empty">등록된 상품이 없습니다.</div>';
+    } else {
+      state.products.forEach((p) => {
+        const card = document.createElement("div");
+        card.className = "shop-product";
+        const imgHtml = p.image_url
+          ? `<img class="shop-product__img" src="${p.image_url}" alt="${p.name}" onerror="this.style.display='none'" />`
+          : `<div class="shop-product__img"></div>`;
+        const categoryHtml = p.category ? `<p class="shop-product__category">${p.category}</p>` : "";
+        const descHtml = p.description ? `<p class="shop-product__desc">${p.description}</p>` : "";
+        const stockText = p.stock >= 0 ? ` (재고: ${p.stock})` : "";
+        card.innerHTML = `
+          ${imgHtml}
+          <div class="shop-product__body">
+            ${categoryHtml}
+            <p class="shop-product__name">${p.name}</p>
+            ${descHtml}
+            <p class="shop-product__price">${formatPoints(p.point_price)}${stockText}</p>
+          </div>
+          <button class="primary" data-product-id="${p.id}">구매</button>
+        `;
+        shopProductList.appendChild(card);
+      });
+    }
+  }
+
+  renderMyOrders();
+};
+
+const renderMyOrders = () => {
+  if (!myOrdersTable) return;
+  myOrdersTable.innerHTML = "";
+  state.myOrders.forEach((o) => {
+    const row = document.createElement("tr");
+    const dateStr = o.ordered_at ? new Date(o.ordered_at).toLocaleString("ko-KR") : "-";
+    row.innerHTML = `
+      <td>${o.product_name || "-"}</td>
+      <td>${formatPoints(o.point_cost)}</td>
+      <td>${o.quantity || 1}</td>
+      <td>${dateStr}</td>
+    `;
+    myOrdersTable.appendChild(row);
+  });
+};
+
+if (shopProductList) {
+  shopProductList.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-product-id]");
+    if (!button) return;
+
+    const productId = Number(button.dataset.productId);
+    const product = state.products.find((p) => p.id === productId);
+    if (!product) return;
+
+    const confirmed = confirm(`"${product.name}" (${formatPoints(product.point_price)})을(를) 구매하시겠습니까?`);
+    if (!confirmed) return;
+
+    button.disabled = true;
+    button.textContent = "구매 중...";
+
+    try {
+      const data = await fetchJson("/api/orders", {
+        method: "POST",
+        body: JSON.stringify({ productId, quantity: 1 }),
+      });
+      state.myPoints = data.remainingPoints;
+      if (myPointsBadge) myPointsBadge.textContent = formatPoints(state.myPoints);
+      alert(`구매 완료! 잔여 포인트: ${formatPoints(data.remainingPoints)}`);
+      await loadShop();
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = "구매";
+    }
+  });
+}
+
+// 관리자: CSV 상품 가져오기
+if (shopCsvImportForm) {
+  shopCsvImportForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (shopCsvImportError) shopCsvImportError.textContent = "";
+    if (shopCsvImportStatus) shopCsvImportStatus.textContent = "";
+
+    const fileInput = document.getElementById("shopCsvFile");
+    const file = fileInput?.files?.[0];
+    if (!file) {
+      if (shopCsvImportError) shopCsvImportError.textContent = "CSV 파일을 선택해주세요.";
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+
+    const submitButton = shopCsvImportForm.querySelector("button");
+    const originalText = submitButton?.textContent;
+    if (submitButton) { submitButton.disabled = true; submitButton.textContent = "가져오는 중..."; }
+
+    try {
+      const response = await fetch("/api/admin/products/import-csv", { method: "POST", body: formData });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "가져오기 실패");
+      if (shopCsvImportStatus) shopCsvImportStatus.textContent = `가져오기 완료: ${data.importedCount}개 등록, ${data.skippedCount}개 스킵`;
+      shopCsvImportForm.reset();
+      loadAdminProducts();
+      loadShop();
+    } catch (error) {
+      if (shopCsvImportError) shopCsvImportError.textContent = error.message;
+    } finally {
+      if (submitButton) { submitButton.disabled = false; submitButton.textContent = originalText; }
+    }
+  });
+}
+
+// 관리자: 상품 개별 등록
+if (shopAddProductForm) {
+  shopAddProductForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (shopAddProductError) shopAddProductError.textContent = "";
+    if (shopAddProductStatus) shopAddProductStatus.textContent = "";
+
+    const fd = new FormData(shopAddProductForm);
+    const payload = {
+      name: fd.get("name"),
+      pointPrice: fd.get("pointPrice"),
+      category: fd.get("category") || "",
+      imageUrl: fd.get("imageUrl") || "",
+      description: fd.get("description") || "",
+      stock: Number(fd.get("stock")) || -1,
+    };
+
+    try {
+      await fetchJson("/api/admin/products", { method: "POST", body: JSON.stringify(payload) });
+      if (shopAddProductStatus) shopAddProductStatus.textContent = "상품이 등록되었습니다.";
+      shopAddProductForm.reset();
+      document.getElementById("shopProductStock").value = "-1";
+      loadAdminProducts();
+      loadShop();
+    } catch (error) {
+      if (shopAddProductError) shopAddProductError.textContent = error.message;
+    }
+  });
+}
+
+// 관리자: 상품 목록
+const loadAdminProducts = async () => {
+  if (!adminProductsTable) return;
+  try {
+    const data = await fetchJson("/api/admin/products");
+    adminProductsTable.innerHTML = "";
+    (data.products || []).forEach((p) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${p.id}</td>
+        <td>${p.name}</td>
+        <td>${formatPoints(p.point_price)}</td>
+        <td>${p.stock < 0 ? "무제한" : p.stock}</td>
+        <td>${p.active !== false ? "활성" : "비활성"}</td>
+      `;
+      adminProductsTable.appendChild(row);
+    });
+  } catch (error) {
+    console.error("관리자 상품 목록 로드 실패", error);
+  }
+};
+
+// 관리자: 포인트 설정
+if (shopPointForm) {
+  shopPointForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (shopPointError) shopPointError.textContent = "";
+    if (shopPointStatus) shopPointStatus.textContent = "";
+
+    const fd = new FormData(shopPointForm);
+    const payload = { employeeId: fd.get("employeeId"), points: fd.get("points") };
+
+    try {
+      const data = await fetchJson("/api/admin/points", { method: "POST", body: JSON.stringify(payload) });
+      if (shopPointStatus) shopPointStatus.textContent = `${data.employee.name}님 포인트: ${formatPoints(data.employee.points)}`;
+      shopPointForm.reset();
+    } catch (error) {
+      if (shopPointError) shopPointError.textContent = error.message;
+    }
+  });
+}
+
+// 관리자: 전체 일괄 포인트
+if (shopPointBulkForm) {
+  shopPointBulkForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (shopPointBulkError) shopPointBulkError.textContent = "";
+    if (shopPointBulkStatus) shopPointBulkStatus.textContent = "";
+
+    const fd = new FormData(shopPointBulkForm);
+    const points = fd.get("points");
+    const confirmed = confirm(`전체 사원에게 ${Number(points).toLocaleString("ko-KR")} P를 일괄 설정합니다. 계속하시겠습니까?`);
+    if (!confirmed) return;
+
+    try {
+      const data = await fetchJson("/api/admin/points/bulk", { method: "POST", body: JSON.stringify({ points }) });
+      if (shopPointBulkStatus) shopPointBulkStatus.textContent = `${data.updatedCount}명에게 ${formatPoints(data.points)} 설정 완료`;
+      shopPointBulkForm.reset();
+    } catch (error) {
+      if (shopPointBulkError) shopPointBulkError.textContent = error.message;
+    }
+  });
+}
+
+// 관리자: 주문 내역
+const loadAdminOrders = async () => {
+  if (!adminOrdersTable) return;
+  try {
+    const data = await fetchJson("/api/admin/orders");
+    adminOrdersTable.innerHTML = "";
+    (data.orders || []).forEach((o) => {
+      const row = document.createElement("tr");
+      const dateStr = o.ordered_at ? new Date(o.ordered_at).toLocaleString("ko-KR") : "-";
+      row.innerHTML = `
+        <td>${o.employee_id}</td>
+        <td>${o.employee_name || "-"}</td>
+        <td>${o.product_name || "-"}</td>
+        <td>${formatPoints(o.point_cost)}</td>
+        <td>${o.quantity || 1}</td>
+        <td>${dateStr}</td>
+      `;
+      adminOrdersTable.appendChild(row);
+    });
+  } catch (error) {
+    console.error("관리자 주문 목록 로드 실패", error);
+  }
+};
+
+if (adminOrdersRefresh) {
+  adminOrdersRefresh.addEventListener("click", () => loadAdminOrders());
 }
 
 if (withholdingLinkForm) {
