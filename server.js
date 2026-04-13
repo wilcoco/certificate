@@ -2318,11 +2318,38 @@ app.post("/api/admin/points", requireAuth, requireAdmin, async (req, res) => {
       return res.json({ employee: mapEmployee(rows[0]) });
     }
 
-    // 이름으로 매칭
-    const { rows: allEmployees } = await pool.query(
+    // 이름으로 매칭 (Postgres + Oracle)
+    const { rows: pgEmployees } = await pool.query(
       "SELECT employee_id, name FROM employees"
     );
-    const matched = allEmployees.filter(
+    const pgIdSet = new Set(pgEmployees.map((e) => e.employee_id));
+
+    const allCandidates = pgEmployees.map((e) => ({
+      employee_id: e.employee_id,
+      name: e.name,
+      source: "pg",
+    }));
+
+    let oracleEmployees = null;
+    try {
+      oracleEmployees = await fetchOracleEmployees();
+    } catch (err) {
+      console.log("Oracle 사원 조회 실패 (무시)", err.message);
+    }
+    if (Array.isArray(oracleEmployees)) {
+      oracleEmployees.forEach((oe) => {
+        if (!oe.employeeId || !oe.name) return;
+        if (allCandidates.some((c) => c.employee_id === oe.employeeId)) return;
+        allCandidates.push({
+          employee_id: oe.employeeId,
+          name: oe.name,
+          team: oe.team || "",
+          source: "oracle",
+        });
+      });
+    }
+
+    const matched = allCandidates.filter(
       (e) => normalizeString(e.name) === name
     );
 
@@ -2336,10 +2363,25 @@ app.post("/api/admin/points", requireAuth, requireAdmin, async (req, res) => {
       });
     }
 
-    const targetId = matched[0].employee_id;
+    const target = matched[0];
+    // Postgres에 없으면 upsert
+    if (!pgIdSet.has(target.employee_id)) {
+      await pool.query(
+        `INSERT INTO employees (employee_id, name, team, password, join_date, points)
+         VALUES ($1, $2, $3, '0000', '2000-01-01', $4)
+         ON CONFLICT (employee_id) DO UPDATE SET points = $4`,
+        [target.employee_id, target.name, target.team || "", points]
+      );
+    } else {
+      await pool.query(
+        "UPDATE employees SET points = $1 WHERE employee_id = $2",
+        [points, target.employee_id]
+      );
+    }
+
     const { rows } = await pool.query(
-      "UPDATE employees SET points = $1 WHERE employee_id = $2 RETURNING *",
-      [points, targetId]
+      "SELECT * FROM employees WHERE employee_id = $1",
+      [target.employee_id]
     );
     return res.json({ employee: mapEmployee(rows[0]) });
   } catch (error) {
@@ -2385,17 +2427,43 @@ app.post(
         });
       }
 
-      // 사원 목록 한 번만 조회
-      const { rows: allEmployees } = await pool.query(
+      // Postgres + Oracle 사원 목록 합치기
+      const { rows: pgEmployees } = await pool.query(
         "SELECT employee_id, name FROM employees"
       );
+      const pgIdSet = new Set(pgEmployees.map((e) => e.employee_id));
+
       const nameToEmployees = new Map();
-      allEmployees.forEach((e) => {
+      pgEmployees.forEach((e) => {
         const n = normalizeString(e.name);
         if (!n) return;
         if (!nameToEmployees.has(n)) nameToEmployees.set(n, []);
-        nameToEmployees.get(n).push(e);
+        nameToEmployees.get(n).push({ employee_id: e.employee_id, name: e.name, source: "pg" });
       });
+
+      // Oracle 사원도 포함
+      let oracleEmployees = null;
+      try {
+        oracleEmployees = await fetchOracleEmployees();
+      } catch (err) {
+        console.log("Oracle 사원 조회 실패 (무시하고 Postgres만 사용)", err.message);
+      }
+      if (Array.isArray(oracleEmployees)) {
+        oracleEmployees.forEach((oe) => {
+          const n = normalizeString(oe.name);
+          if (!n || !oe.employeeId) return;
+          // Postgres에 이미 같은 사번이 있으면 중복 추가하지 않음
+          const existing = nameToEmployees.get(n);
+          if (existing && existing.some((e) => e.employee_id === oe.employeeId)) return;
+          if (!nameToEmployees.has(n)) nameToEmployees.set(n, []);
+          nameToEmployees.get(n).push({
+            employee_id: oe.employeeId,
+            name: oe.name,
+            team: oe.team || "",
+            source: "oracle",
+          });
+        });
+      }
 
       let updatedCount = 0;
       let skippedCount = 0;
@@ -2429,10 +2497,22 @@ app.post(
           continue;
         }
 
-        await pool.query(
-          "UPDATE employees SET points = $1 WHERE employee_id = $2",
-          [rowPoints, matches[0].employee_id]
-        );
+        const target = matches[0];
+        // Postgres에 없으면 upsert
+        if (!pgIdSet.has(target.employee_id)) {
+          await pool.query(
+            `INSERT INTO employees (employee_id, name, team, password, join_date, points)
+             VALUES ($1, $2, $3, '0000', '2000-01-01', $4)
+             ON CONFLICT (employee_id) DO UPDATE SET points = $4`,
+            [target.employee_id, target.name, target.team || "", rowPoints]
+          );
+          pgIdSet.add(target.employee_id);
+        } else {
+          await pool.query(
+            "UPDATE employees SET points = $1 WHERE employee_id = $2",
+            [rowPoints, target.employee_id]
+          );
+        }
         updatedCount++;
       }
 
