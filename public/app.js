@@ -353,9 +353,21 @@ certificateList.addEventListener("click", async (event) => {
   button.disabled = true;
 
   try {
+    // 원천징수 영수증 외 증명서는 주민번호 뒷자리 검증 필요
+    let residentBack = "";
+    if (id !== "withholding") {
+      residentBack = prompt("본인 확인을 위해 주민등록번호 뒷자리 7자리를 입력하세요.");
+      if (!residentBack || residentBack.trim().length === 0) {
+        button.textContent = originalText;
+        button.disabled = false;
+        return;
+      }
+      residentBack = residentBack.trim();
+    }
+
     const maskResidentNumber = maskResidentNumberToggle?.checked ? "1" : "0";
     const response = await fetch(
-      `/api/certificates/${id}?maskResidentNumber=${encodeURIComponent(maskResidentNumber)}`
+      `/api/certificates/${id}?maskResidentNumber=${encodeURIComponent(maskResidentNumber)}${residentBack ? `&residentBack=${encodeURIComponent(residentBack)}` : ""}`
     );
     if (!response.ok) {
       const data = await response.json();

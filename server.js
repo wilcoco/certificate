@@ -1621,6 +1621,22 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
     return res.status(404).json({ message: "문서를 찾을 수 없습니다." });
   }
 
+  // 원천징수 영수증 외: 주민번호 뒷자리 검증
+  if (certificate.id !== "withholding") {
+    const residentBack = String(req.query.residentBack || "").trim();
+    const fullResident = String(req.session.employee.residentNumber || "").replace(/[^0-9]/g, "");
+    const actualBack = fullResident.length >= 13 ? fullResident.slice(6) : "";
+    if (!residentBack) {
+      return res.status(400).json({ message: "주민등록번호 뒷자리를 입력해주세요." });
+    }
+    if (!actualBack) {
+      return res.status(400).json({ message: "주민등록번호 정보가 등록되어 있지 않습니다. 관리자에게 문의하세요." });
+    }
+    if (residentBack.replace(/[^0-9]/g, "") !== actualBack) {
+      return res.status(403).json({ message: "주민등록번호 뒷자리가 일치하지 않습니다." });
+    }
+  }
+
   if (certificate.id === "withholding") {
     try {
       const employeeId = req.session.employee.employeeId;
@@ -1784,131 +1800,155 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
       `attachment; filename="${certificate.filename}"`
     );
 
-    const doc = new PDFDocument({ margin: 50 });
+    const doc = new PDFDocument({ size: "A4", margin: 60 });
     doc.pipe(res);
 
-    const fontCandidates = [
+    // 폰트 등록
+    const fontRegular = [
+      path.join(__dirname, "assets", "Noto_Sans_KR", "static", "NotoSansKR-Regular.ttf"),
       path.join(__dirname, "assets", "NotoSansKR-Regular.ttf"),
-      path.join(
-        __dirname,
-        "assets",
-        "Noto_Sans_KR",
-        "static",
-        "NotoSansKR-Regular.ttf"
-      ),
-      path.join(
-        __dirname,
-        "assets",
-        "Noto_Sans_KR",
-        "NotoSansKR-VariableFont_wght.ttf"
-      ),
-    ];
+    ].find((f) => fs.existsSync(f));
+    const fontBold = [
+      path.join(__dirname, "assets", "Noto_Sans_KR", "static", "NotoSansKR-Bold.ttf"),
+    ].find((f) => fs.existsSync(f));
 
-    const selectedFont = fontCandidates.find((candidate) =>
-      fs.existsSync(candidate)
-    );
-    if (selectedFont) {
-      doc.font(selectedFont);
-    }
+    if (fontRegular) doc.registerFont("Regular", fontRegular);
+    if (fontBold) doc.registerFont("Bold", fontBold);
+    const useFont = (weight) => {
+      if (weight === "bold" && fontBold) doc.font("Bold");
+      else if (fontRegular) doc.font("Regular");
+    };
 
-    const logoCandidates = [
-      path.join(__dirname, "assets", "cams_tr2.png"),
-      path.join(__dirname, "assets", "cams_TR2.png"),
-    ];
-    const selectedLogo = logoCandidates.find((candidate) =>
-      fs.existsSync(candidate)
-    );
+    const pageW = doc.page.width;
+    const marginL = doc.page.margins.left;
+    const marginR = doc.page.margins.right;
+    const contentW = pageW - marginL - marginR;
 
-    const headerTop = doc.page.margins.top;
-    const headerLeft = doc.page.margins.left;
-    const logoSize = 40;
+    // === 상단: 문서번호 ===
+    useFont("regular");
+    doc.fontSize(9).fillColor("#555").text(`문서번호: ${documentNumber}`, marginL, 40, { align: "right", width: contentW });
 
-    if (selectedLogo) {
-      try {
-        doc.image(selectedLogo, headerLeft, headerTop - 4, { width: logoSize });
-      } catch (logoError) {}
-    }
+    // === 제목 ===
+    const titleY = 80;
+    useFont("bold");
+    doc.fontSize(26).fillColor("#000").text(certificate.title, marginL, titleY, { align: "center", width: contentW });
 
-    const companyTextX = selectedLogo
-      ? headerLeft + logoSize + 10
-      : headerLeft;
-    doc.fontSize(13).fillColor("#444").text("(주)캠스", companyTextX, headerTop + 10);
-
-    doc.y = headerTop + (selectedLogo ? logoSize : 26) + 10;
-    doc.fontSize(20).fillColor("#111").text(certificate.title, {
-      align: "center",
-    });
-    doc
-      .moveDown(0.6)
-      .lineWidth(1)
-      .strokeColor("#d4c8bb")
-      .moveTo(50, doc.y)
-      .lineTo(doc.page.width - 50, doc.y)
+    // 제목 밑줄 (이중선)
+    const titleUnderY = titleY + 40;
+    doc.lineWidth(2).strokeColor("#000")
+      .moveTo(marginL + contentW * 0.25, titleUnderY)
+      .lineTo(marginL + contentW * 0.75, titleUnderY)
+      .stroke();
+    doc.lineWidth(0.5)
+      .moveTo(marginL + contentW * 0.25, titleUnderY + 4)
+      .lineTo(marginL + contentW * 0.75, titleUnderY + 4)
       .stroke();
 
-    doc.moveDown(1.2);
-    doc.fontSize(12).fillColor("#222");
-    const labelX = 70;
-    const valueX = 150;
-    const rowGap = 22;
-    let cursorY = doc.y;
+    // === 인적사항 테이블 ===
+    const tableTop = titleUnderY + 30;
+    const tableLeft = marginL + 20;
+    const labelColW = 110;
+    const valueColW = contentW - 40 - labelColW;
+    const cellPadX = 10;
+    const cellPadY = 8;
 
-    const rows = [
-      ["성명", req.session.employee.name],
+    const infoRows = [
+      ["성    명", req.session.employee.name],
       ["주민등록번호", residentNumberForPdf],
-      ["주소", req.session.employee.address || ""],
-      ["소속팀", req.session.employee.team],
-      ["입사일자", req.session.employee.joinDate],
-      ["퇴직일자", req.session.employee.retirementDate || "재직 중"],
-      ["발급일시", issuedAtText],
-      ["문서번호", documentNumber],
+      ["주    소", req.session.employee.address || "-"],
+      ["소 속 부 서", req.session.employee.team],
+      ["입 사 일 자", req.session.employee.joinDate],
+      ["퇴 직 일 자", req.session.employee.retirementDate || "재직 중"],
     ];
 
-    const valueWidth = doc.page.width - doc.page.margins.right - valueX;
-    rows.forEach(([label, value]) => {
-      const displayValue =
-        value === undefined || value === null || value === "" ? "-" : String(value);
+    let tableY = tableTop;
+    useFont("regular");
+    infoRows.forEach(([label, value]) => {
+      const displayValue = value === undefined || value === null || value === "" ? "-" : String(value);
+      doc.fontSize(11);
+      const textH = Math.max(
+        doc.heightOfString(displayValue, { width: valueColW - cellPadX * 2 }),
+        16
+      );
+      const rowH = textH + cellPadY * 2;
 
-      doc.fontSize(11).fillColor("#666").text(label, labelX, cursorY);
-      doc.fontSize(12).fillColor("#222");
-      const valueHeight = doc.heightOfString(displayValue, { width: valueWidth });
-      doc.text(displayValue, valueX, cursorY, { width: valueWidth });
-      cursorY += Math.max(rowGap, valueHeight + 6);
+      // 라벨 셀 (회색 배경)
+      doc.rect(tableLeft, tableY, labelColW, rowH).fillAndStroke("#f0f0f0", "#333");
+      useFont("bold");
+      doc.fontSize(11).fillColor("#000").text(label, tableLeft + cellPadX, tableY + cellPadY, { width: labelColW - cellPadX * 2 });
+
+      // 값 셀
+      doc.rect(tableLeft + labelColW, tableY, valueColW, rowH).stroke("#333");
+      useFont("regular");
+      doc.fontSize(11).fillColor("#000").text(displayValue, tableLeft + labelColW + cellPadX, tableY + cellPadY, { width: valueColW - cellPadX * 2 });
+
+      tableY += rowH;
     });
 
-    const stampWidth = 220;
-    const stampHeight = 70;
-    const stampX = doc.page.width - stampWidth - 50;
-    const safeBottom = doc.page.height - doc.page.margins.bottom;
-    const stampPaddingBottom = 14;
-    const qrSize = 110;
-    const issueInfoHeight = 44;
-    const stampBlockHeight = stampHeight + stampPaddingBottom + qrSize + issueInfoHeight;
-    const stampY = safeBottom - stampBlockHeight;
+    // === 용도 / 증명 문구 ===
+    const purposeY = tableY + 30;
+    useFont("regular");
+    doc.fontSize(11).fillColor("#000");
 
-    doc
-      .save()
-      .rect(stampX, stampY, stampWidth, stampHeight)
-      .lineWidth(2)
-      .strokeColor("#b4382d")
-      .stroke()
-      .fontSize(12)
-      .fillColor("#b4382d")
-      .text("(주)캠스", stampX + 12, stampY + 14)
-      .fontSize(13)
-      .text("전자발급 확인", stampX + 12, stampY + 36);
+    let purposeText = "";
+    if (certificate.id === "employment") {
+      purposeText = "위 사람은 현재 당사에 재직하고 있음을 증명합니다.";
+    } else if (certificate.id === "career") {
+      purposeText = "위 사람이 당사에서 상기 기간 동안 근무하였음을 증명합니다.";
+    } else if (certificate.id === "retirement") {
+      purposeText = "위 사람이 당사를 퇴직하였음을 증명합니다.";
+    } else {
+      purposeText = "위 사실을 증명합니다.";
+    }
 
-    const qrX = stampX + stampWidth - qrSize;
-    const qrY = stampY + stampHeight + stampPaddingBottom;
-    doc.image(qrImage, qrX, qrY, { width: qrSize });
+    doc.text(purposeText, marginL, purposeY, { align: "center", width: contentW });
 
-    doc
-      .fontSize(9)
-      .fillColor("#444")
-      .text(`발급일시: ${issuedAtText}`, stampX, qrY + qrSize + 8)
-      .text(`문서번호: ${documentNumber}`, stampX, qrY + qrSize + 22);
+    // === 발급일자 ===
+    const dateY = purposeY + 50;
+    const now = issuedAt;
+    const dateStr = `${now.getFullYear()}년  ${String(now.getMonth() + 1).padStart(2, "0")}월  ${String(now.getDate()).padStart(2, "0")}일`;
+    useFont("regular");
+    doc.fontSize(13).fillColor("#000").text(dateStr, marginL, dateY, { align: "center", width: contentW });
 
+    // === 회사명 + 직인 ===
+    const companyY = dateY + 60;
+    useFont("bold");
+    doc.fontSize(16).fillColor("#000").text("주식회사  캠 스", marginL, companyY, { align: "center", width: contentW });
+    useFont("regular");
+    doc.fontSize(13).fillColor("#000").text("대표이사", marginL, companyY + 28, { align: "center", width: contentW });
+
+    // 직인 (빨간 원형 도장)
+    const sealCenterX = marginL + contentW * 0.5 + 80;
+    const sealCenterY = companyY + 20;
+    const sealR = 30;
+    doc.save()
+      .circle(sealCenterX, sealCenterY, sealR)
+      .lineWidth(2.5)
+      .strokeColor("#c0392b")
+      .stroke();
+    useFont("bold");
+    doc.fontSize(9).fillColor("#c0392b")
+      .text("주식회사", sealCenterX - 18, sealCenterY - 14, { width: 36, align: "center" })
+      .text("캠  스", sealCenterX - 18, sealCenterY - 2, { width: 36, align: "center" })
+      .text("직  인", sealCenterX - 18, sealCenterY + 10, { width: 36, align: "center" });
     doc.restore();
+
+    // === 하단: QR + 발급정보 ===
+    const bottomY = doc.page.height - doc.page.margins.bottom - 100;
+    const qrSize = 70;
+    doc.image(qrImage, marginL, bottomY, { width: qrSize });
+    useFont("regular");
+    doc.fontSize(8).fillColor("#666")
+      .text(`발급일시: ${issuedAtText}`, marginL + qrSize + 10, bottomY + 10)
+      .text(`문서번호: ${documentNumber}`, marginL + qrSize + 10, bottomY + 22)
+      .text("QR 코드를 스캔하여 문서 진위를 확인할 수 있습니다.", marginL + qrSize + 10, bottomY + 34);
+
+    // 하단 경계선
+    doc.lineWidth(0.5).strokeColor("#999")
+      .moveTo(marginL, bottomY - 10)
+      .lineTo(marginL + contentW, bottomY - 10)
+      .stroke();
+
     doc.end();
   } catch (error) {
     res.status(500).json({ message: "PDF 생성에 실패했습니다." });
