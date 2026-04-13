@@ -466,7 +466,13 @@ const fetchOracleEmployees = async () => {
       })
     );
 
-    return employees.filter((record) => record.employeeId);
+    // employee_id 기준 중복 제거 (Oracle에 이력 등 복수 행이 있을 수 있음)
+    const seen = new Set();
+    return employees.filter((record) => {
+      if (!record.employeeId || seen.has(record.employeeId)) return false;
+      seen.add(record.employeeId);
+      return true;
+    });
   } finally {
     if (connection) {
       try {
@@ -2318,17 +2324,16 @@ app.post("/api/admin/points", requireAuth, requireAdmin, async (req, res) => {
       return res.json({ employee: mapEmployee(rows[0]) });
     }
 
-    // 이름으로 매칭 (Postgres + Oracle)
+    // employee_id 기준 글로벌 맵 → 이름 역맵 (Postgres + Oracle)
     const { rows: pgEmployees } = await pool.query(
       "SELECT employee_id, name FROM employees"
     );
     const pgIdSet = new Set(pgEmployees.map((e) => e.employee_id));
-
-    const allCandidates = pgEmployees.map((e) => ({
-      employee_id: e.employee_id,
-      name: e.name,
-      source: "pg",
-    }));
+    const idMap = new Map();
+    pgEmployees.forEach((e) => {
+      if (!e.employee_id) return;
+      idMap.set(e.employee_id, { employee_id: e.employee_id, name: e.name, team: "", source: "pg" });
+    });
 
     let oracleEmployees = null;
     try {
@@ -2339,8 +2344,8 @@ app.post("/api/admin/points", requireAuth, requireAdmin, async (req, res) => {
     if (Array.isArray(oracleEmployees)) {
       oracleEmployees.forEach((oe) => {
         if (!oe.employeeId || !oe.name) return;
-        if (allCandidates.some((c) => c.employee_id === oe.employeeId)) return;
-        allCandidates.push({
+        if (idMap.has(oe.employeeId)) return;
+        idMap.set(oe.employeeId, {
           employee_id: oe.employeeId,
           name: oe.name,
           team: oe.team || "",
@@ -2349,7 +2354,7 @@ app.post("/api/admin/points", requireAuth, requireAdmin, async (req, res) => {
       });
     }
 
-    const matched = allCandidates.filter(
+    const matched = [...idMap.values()].filter(
       (e) => normalizeString(e.name) === name
     );
 
@@ -2427,21 +2432,18 @@ app.post(
         });
       }
 
-      // Postgres + Oracle 사원 목록 합치기
+      // employee_id 기준 글로벌 맵 (중복 불가)
       const { rows: pgEmployees } = await pool.query(
         "SELECT employee_id, name FROM employees"
       );
       const pgIdSet = new Set(pgEmployees.map((e) => e.employee_id));
-
-      const nameToEmployees = new Map();
+      const idMap = new Map(); // employee_id → {name, team, source}
       pgEmployees.forEach((e) => {
-        const n = normalizeString(e.name);
-        if (!n) return;
-        if (!nameToEmployees.has(n)) nameToEmployees.set(n, []);
-        nameToEmployees.get(n).push({ employee_id: e.employee_id, name: e.name, source: "pg" });
+        if (!e.employee_id) return;
+        idMap.set(e.employee_id, { employee_id: e.employee_id, name: e.name, team: "", source: "pg" });
       });
 
-      // Oracle 사원도 포함
+      // Oracle 사원 추가 (Postgres에 없는 사번만)
       let oracleEmployees = null;
       try {
         oracleEmployees = await fetchOracleEmployees();
@@ -2450,19 +2452,24 @@ app.post(
       }
       if (Array.isArray(oracleEmployees)) {
         oracleEmployees.forEach((oe) => {
-          const n = normalizeString(oe.name);
-          if (!n || !oe.employeeId) return;
-          // Postgres에 이미 같은 사번이 있으면 중복 추가하지 않음
-          const existing = nameToEmployees.get(n);
-          if (existing && existing.some((e) => e.employee_id === oe.employeeId)) return;
-          if (!nameToEmployees.has(n)) nameToEmployees.set(n, []);
-          nameToEmployees.get(n).push({
+          if (!oe.employeeId || !oe.name) return;
+          if (idMap.has(oe.employeeId)) return; // Postgres 우선
+          idMap.set(oe.employeeId, {
             employee_id: oe.employeeId,
             name: oe.name,
             team: oe.team || "",
             source: "oracle",
           });
         });
+      }
+
+      // 이름 → 사원 목록 역맵
+      const nameToEmployees = new Map();
+      for (const emp of idMap.values()) {
+        const n = normalizeString(emp.name);
+        if (!n) continue;
+        if (!nameToEmployees.has(n)) nameToEmployees.set(n, []);
+        nameToEmployees.get(n).push(emp);
       }
 
       let updatedCount = 0;
