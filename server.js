@@ -67,9 +67,7 @@ app.use(
 
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/assets", express.static(path.join(__dirname, "assets")));
-const uploadsDir = path.join(__dirname, "uploads", "products");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+// 이미지는 Postgres DB에 저장 (재배포 시 유지)
 
 initSchema().then(async () => {
   // 관리자 사번 설정
@@ -2237,7 +2235,7 @@ app.delete("/api/admin/products/:id", requireAuth, requireAdmin, async (req, res
   }
 });
 
-// 관리자: 상품 이미지 업로드
+// 관리자: 상품 이미지 업로드 (DB 저장)
 app.post(
   "/api/admin/products/upload-image",
   requireAuth,
@@ -2253,11 +2251,13 @@ app.post(
       if (!allowedTypes.includes(file.mimetype)) {
         return res.status(400).json({ message: "JPG, PNG, GIF, WEBP 파일만 업로드 가능합니다." });
       }
-      const ext = file.originalname.split(".").pop() || "jpg";
+      const ext = (file.originalname.split(".").pop() || "jpg").toLowerCase();
       const filename = `${Date.now()}_${crypto.randomBytes(4).toString("hex")}.${ext}`;
-      const filepath = path.join(uploadsDir, filename);
-      fs.writeFileSync(filepath, file.buffer);
-      const imageUrl = `/uploads/products/${filename}`;
+      const { rows } = await pool.query(
+        "INSERT INTO shop_images (filename, mimetype, data) VALUES ($1, $2, $3) RETURNING id",
+        [filename, file.mimetype, file.buffer]
+      );
+      const imageUrl = `/api/shop-images/${rows[0].id}`;
       return res.json({ imageUrl });
     } catch (error) {
       console.error("이미지 업로드 실패", error);
@@ -2265,6 +2265,24 @@ app.post(
     }
   }
 );
+
+// 상품 이미지 서빙 (DB에서)
+app.get("/api/shop-images/:id", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      "SELECT filename, mimetype, data FROM shop_images WHERE id = $1",
+      [Number(req.params.id)]
+    );
+    if (!rows.length) return res.status(404).send("이미지를 찾을 수 없습니다.");
+    const img = rows[0];
+    res.set("Content-Type", img.mimetype);
+    res.set("Cache-Control", "public, max-age=31536000");
+    return res.send(img.data);
+  } catch (error) {
+    console.error("이미지 조회 실패", error);
+    return res.status(500).send("이미지 로드 실패");
+  }
+});
 
 // 관리자: CSV로 상품 일괄 등록 (Wix 내보내기 호환)
 app.post(

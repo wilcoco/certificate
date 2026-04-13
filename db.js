@@ -479,6 +479,16 @@ const initSchema = async () => {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS shop_images (
+      id SERIAL PRIMARY KEY,
+      filename TEXT NOT NULL,
+      mimetype TEXT NOT NULL,
+      data BYTEA NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS shop_orders (
       id SERIAL PRIMARY KEY,
       employee_id TEXT NOT NULL REFERENCES employees(employee_id),
