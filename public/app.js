@@ -703,14 +703,68 @@ const loadAdminProducts = async () => {
     adminProductsTable.innerHTML = "";
     (data.products || []).forEach((p) => {
       const row = document.createElement("tr");
+      const imgSrc = p.image_url || "";
+      const imgHtml = imgSrc
+        ? `<img src="${imgSrc}" alt="" style="width:48px;height:48px;object-fit:cover;border-radius:4px;">`
+        : `<span style="color:#aaa;font-size:12px">없음</span>`;
       row.innerHTML = `
         <td>${p.id}</td>
+        <td>${imgHtml}</td>
         <td>${p.name}</td>
         <td>${formatPoints(p.point_price)}</td>
         <td>${p.stock < 0 ? "무제한" : p.stock}</td>
         <td>${p.active !== false ? "활성" : "비활성"}</td>
+        <td>
+          <button class="btn-edit-product" data-id="${p.id}" style="font-size:12px;padding:2px 8px;margin:2px">수정</button>
+          <button class="btn-del-product" data-id="${p.id}" style="font-size:12px;padding:2px 8px;margin:2px;background:#e74c3c;color:#fff;border:none;border-radius:4px;cursor:pointer">삭제</button>
+        </td>
       `;
       adminProductsTable.appendChild(row);
+    });
+
+    adminProductsTable.querySelectorAll(".btn-edit-product").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.id;
+        const product = (data.products || []).find((p) => String(p.id) === id);
+        if (!product) return;
+        const newName = prompt("상품명", product.name);
+        if (newName === null) return;
+        const newPrice = prompt("포인트 가격", product.point_price);
+        if (newPrice === null) return;
+        const newImage = prompt("이미지 URL (Wix 사이트에서 우클릭→이미지 주소 복사)", product.image_url || "");
+        if (newImage === null) return;
+        const newStock = prompt("재고 (-1=무제한)", product.stock);
+        if (newStock === null) return;
+        try {
+          await fetchJson(`/api/admin/products/${id}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              name: newName,
+              pointPrice: Number(newPrice),
+              imageUrl: newImage,
+              stock: Number(newStock),
+              active: product.active,
+            }),
+          });
+          loadAdminProducts();
+          loadShop();
+        } catch (err) {
+          alert("수정 실패: " + err.message);
+        }
+      });
+    });
+
+    adminProductsTable.querySelectorAll(".btn-del-product").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("정말 삭제하시겠습니까?")) return;
+        try {
+          await fetchJson(`/api/admin/products/${btn.dataset.id}`, { method: "DELETE" });
+          loadAdminProducts();
+          loadShop();
+        } catch (err) {
+          alert("삭제 실패: " + err.message);
+        }
+      });
     });
   } catch (error) {
     console.error("관리자 상품 목록 로드 실패", error);
