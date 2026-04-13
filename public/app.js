@@ -665,6 +665,16 @@ if (shopCsvImportForm) {
   });
 }
 
+// 이미지 파일 업로드 헬퍼
+const uploadProductImage = async (file) => {
+  const formData = new FormData();
+  formData.append("image", file, file.name);
+  const response = await fetch("/api/admin/products/upload-image", { method: "POST", body: formData });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "이미지 업로드 실패");
+  return data.imageUrl;
+};
+
 // 관리자: 상품 개별 등록
 if (shopAddProductForm) {
   shopAddProductForm.addEventListener("submit", async (event) => {
@@ -673,16 +683,25 @@ if (shopAddProductForm) {
     if (shopAddProductStatus) shopAddProductStatus.textContent = "";
 
     const fd = new FormData(shopAddProductForm);
-    const payload = {
-      name: fd.get("name"),
-      pointPrice: fd.get("pointPrice"),
-      category: fd.get("category") || "",
-      imageUrl: fd.get("imageUrl") || "",
-      description: fd.get("description") || "",
-      stock: Number(fd.get("stock")) || -1,
-    };
+    let imageUrl = fd.get("imageUrl") || "";
 
     try {
+      // 파일이 있으면 먼저 업로드
+      const imageFile = document.getElementById("shopProductImageFile")?.files?.[0];
+      if (imageFile) {
+        if (shopAddProductStatus) shopAddProductStatus.textContent = "이미지 업로드 중...";
+        imageUrl = await uploadProductImage(imageFile);
+      }
+
+      const payload = {
+        name: fd.get("name"),
+        pointPrice: fd.get("pointPrice"),
+        category: fd.get("category") || "",
+        imageUrl,
+        description: fd.get("description") || "",
+        stock: Number(fd.get("stock")) || -1,
+      };
+
       await fetchJson("/api/admin/products", { method: "POST", body: JSON.stringify(payload) });
       if (shopAddProductStatus) shopAddProductStatus.textContent = "상품이 등록되었습니다.";
       shopAddProductForm.reset();
@@ -731,10 +750,32 @@ const loadAdminProducts = async () => {
         if (newName === null) return;
         const newPrice = prompt("포인트 가격", product.point_price);
         if (newPrice === null) return;
-        const newImage = prompt("이미지 URL (Wix 사이트에서 우클릭→이미지 주소 복사)", product.image_url || "");
-        if (newImage === null) return;
         const newStock = prompt("재고 (-1=무제한)", product.stock);
         if (newStock === null) return;
+
+        // 이미지: 파일 선택 다이얼로그
+        let newImage = product.image_url || "";
+        const wantImage = confirm("이미지를 변경하시겠습니까?");
+        if (wantImage) {
+          const fileInput = document.createElement("input");
+          fileInput.type = "file";
+          fileInput.accept = "image/*";
+          const filePromise = new Promise((resolve) => {
+            fileInput.onchange = () => resolve(fileInput.files[0] || null);
+            fileInput.click();
+            setTimeout(() => resolve(null), 60000);
+          });
+          const selectedFile = await filePromise;
+          if (selectedFile) {
+            try {
+              newImage = await uploadProductImage(selectedFile);
+            } catch (err) {
+              alert("이미지 업로드 실패: " + err.message);
+              return;
+            }
+          }
+        }
+
         try {
           await fetchJson(`/api/admin/products/${id}`, {
             method: "PUT",

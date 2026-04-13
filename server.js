@@ -67,6 +67,9 @@ app.use(
 
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/assets", express.static(path.join(__dirname, "assets")));
+const uploadsDir = path.join(__dirname, "uploads", "products");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 initSchema().then(async () => {
   // 관리자 사번 설정
@@ -2233,6 +2236,35 @@ app.delete("/api/admin/products/:id", requireAuth, requireAdmin, async (req, res
     return res.status(500).json({ message: "상품 삭제에 실패했습니다." });
   }
 });
+
+// 관리자: 상품 이미지 업로드
+app.post(
+  "/api/admin/products/upload-image",
+  requireAuth,
+  requireAdmin,
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ message: "이미지 파일을 선택해주세요." });
+      }
+      const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+      if (!allowedTypes.includes(file.mimetype)) {
+        return res.status(400).json({ message: "JPG, PNG, GIF, WEBP 파일만 업로드 가능합니다." });
+      }
+      const ext = file.originalname.split(".").pop() || "jpg";
+      const filename = `${Date.now()}_${crypto.randomBytes(4).toString("hex")}.${ext}`;
+      const filepath = path.join(uploadsDir, filename);
+      fs.writeFileSync(filepath, file.buffer);
+      const imageUrl = `/uploads/products/${filename}`;
+      return res.json({ imageUrl });
+    } catch (error) {
+      console.error("이미지 업로드 실패", error);
+      return res.status(500).json({ message: "이미지 업로드에 실패했습니다." });
+    }
+  }
+);
 
 // 관리자: CSV로 상품 일괄 등록 (Wix 내보내기 호환)
 app.post(
