@@ -68,7 +68,19 @@ app.use(
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/assets", express.static(path.join(__dirname, "assets")));
 
-initSchema().catch((error) => {
+initSchema().then(async () => {
+  // 관리자 사번 설정
+  const adminIds = (process.env.ADMIN_EMPLOYEE_IDS || "103485").split(",").map(s => s.trim()).filter(Boolean);
+  for (const aid of adminIds) {
+    await pool.query(
+      `INSERT INTO employees (employee_id, name, team, password, join_date, is_admin)
+       VALUES ($1, '', '', '0000', '2000-01-01', true)
+       ON CONFLICT (employee_id) DO UPDATE SET is_admin = true`,
+      [aid]
+    );
+  }
+  console.log("관리자 설정 완료:", adminIds.join(", "));
+}).catch((error) => {
   console.error("DB 초기화 실패", error);
   process.exit(1);
 });
