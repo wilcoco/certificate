@@ -2296,25 +2296,153 @@ app.get("/api/admin/points", requireAuth, requireAdmin, async (req, res) => {
 app.post("/api/admin/points", requireAuth, requireAdmin, async (req, res) => {
   try {
     const employeeId = normalizeString(req.body.employeeId);
+    const name = normalizeString(req.body.name);
     const points = Number(req.body.points);
 
-    if (!employeeId || !Number.isFinite(points) || points < 0) {
-      return res.status(400).json({ message: "사번과 올바른 포인트를 입력해주세요." });
+    if (!Number.isFinite(points) || points < 0) {
+      return res.status(400).json({ message: "올바른 포인트를 입력해주세요." });
+    }
+    if (!employeeId && !name) {
+      return res.status(400).json({ message: "사번 또는 이름을 입력해주세요." });
     }
 
+    // 사번이 있으면 사번 우선
+    if (employeeId) {
+      const { rows } = await pool.query(
+        "UPDATE employees SET points = $1 WHERE employee_id = $2 RETURNING *",
+        [points, employeeId]
+      );
+      if (!rows.length) {
+        return res.status(404).json({ message: "사원을 찾을 수 없습니다." });
+      }
+      return res.json({ employee: mapEmployee(rows[0]) });
+    }
+
+    // 이름으로 매칭
+    const { rows: allEmployees } = await pool.query(
+      "SELECT employee_id, name FROM employees"
+    );
+    const matched = allEmployees.filter(
+      (e) => normalizeString(e.name) === name
+    );
+
+    if (matched.length === 0) {
+      return res.status(404).json({ message: `"${name}" 이름의 사원을 찾을 수 없습니다.` });
+    }
+    if (matched.length > 1) {
+      const ids = matched.map((e) => e.employee_id).join(", ");
+      return res.status(409).json({
+        message: `"${name}" 이름의 사원이 ${matched.length}명입니다 (${ids}). 사번으로 지정해주세요.`,
+      });
+    }
+
+    const targetId = matched[0].employee_id;
     const { rows } = await pool.query(
       "UPDATE employees SET points = $1 WHERE employee_id = $2 RETURNING *",
-      [points, employeeId]
+      [points, targetId]
     );
-    if (!rows.length) {
-      return res.status(404).json({ message: "사원을 찾을 수 없습니다." });
-    }
     return res.json({ employee: mapEmployee(rows[0]) });
   } catch (error) {
     console.error("포인트 부여 실패", error);
     return res.status(500).json({ message: "포인트 부여에 실패했습니다." });
   }
 });
+
+// 관리자: CSV로 이름 매칭 포인트 일괄 지급
+app.post(
+  "/api/admin/points/import-csv",
+  requireAuth,
+  requireAdmin,
+  upload.single("file"),
+  async (req, res) => {
+    try {
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ message: "CSV 파일을 업로드해주세요." });
+      }
+
+      const csvText = file.buffer.toString("utf-8");
+      const lines = csvText
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      if (lines.length < 2) {
+        return res.status(400).json({ message: "CSV에 데이터가 없습니다." });
+      }
+
+      const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
+      const nameIdx = headers.findIndex(
+        (h) => h === "name" || h === "이름" || h === "성명"
+      );
+      const pointsIdx = headers.findIndex(
+        (h) => h === "points" || h === "포인트" || h === "point" || h === "금액"
+      );
+
+      if (nameIdx === -1 || pointsIdx === -1) {
+        return res.status(400).json({
+          message: "CSV에 이름(name/이름/성명)과 포인트(points/포인트/금액) 컬럼이 필요합니다.",
+        });
+      }
+
+      // 사원 목록 한 번만 조회
+      const { rows: allEmployees } = await pool.query(
+        "SELECT employee_id, name FROM employees"
+      );
+      const nameToEmployees = new Map();
+      allEmployees.forEach((e) => {
+        const n = normalizeString(e.name);
+        if (!n) return;
+        if (!nameToEmployees.has(n)) nameToEmployees.set(n, []);
+        nameToEmployees.get(n).push(e);
+      });
+
+      let updatedCount = 0;
+      let skippedCount = 0;
+      let duplicateCount = 0;
+      const details = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(",").map((c) => c.trim());
+        const rowName = normalizeString(cols[nameIdx]);
+        const rowPoints = Number(String(cols[pointsIdx]).replace(/[^0-9]/g, ""));
+
+        if (!rowName || !Number.isFinite(rowPoints)) {
+          skippedCount++;
+          details.push({ name: cols[nameIdx] || "", reason: "invalid" });
+          continue;
+        }
+
+        const matches = nameToEmployees.get(rowName);
+        if (!matches || matches.length === 0) {
+          skippedCount++;
+          details.push({ name: rowName, reason: "not_found" });
+          continue;
+        }
+        if (matches.length > 1) {
+          duplicateCount++;
+          details.push({
+            name: rowName,
+            reason: "duplicate",
+            employeeIds: matches.map((e) => e.employee_id),
+          });
+          continue;
+        }
+
+        await pool.query(
+          "UPDATE employees SET points = $1 WHERE employee_id = $2",
+          [rowPoints, matches[0].employee_id]
+        );
+        updatedCount++;
+      }
+
+      return res.json({ updatedCount, skippedCount, duplicateCount, details });
+    } catch (error) {
+      console.error("포인트 CSV 가져오기 실패", error);
+      return res.status(500).json({ message: "CSV 포인트 지급에 실패했습니다." });
+    }
+  }
+);
 
 // 관리자: 전체 사원에게 일괄 포인트 부여
 app.post("/api/admin/points/bulk", requireAuth, requireAdmin, async (req, res) => {

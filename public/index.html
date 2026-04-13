@@ -249,11 +249,15 @@
           </div>
 
           <h2 style="margin-top:24px">포인트 관리</h2>
-          <p class="muted">사번별 포인트 부여</p>
+          <p class="muted">사번 또는 이름으로 포인트 부여 (이름 매칭 지원)</p>
           <form id="shop-point-form" class="grid-form">
             <div>
               <label for="pointEmployeeId">사번</label>
-              <input id="pointEmployeeId" name="employeeId" type="text" required inputmode="numeric" placeholder="사번" />
+              <input id="pointEmployeeId" name="employeeId" type="text" inputmode="numeric" placeholder="사번 (선택)" />
+            </div>
+            <div>
+              <label for="pointEmployeeName">이름</label>
+              <input id="pointEmployeeName" name="name" type="text" placeholder="이름 (사번 없을 때)" />
             </div>
             <div>
               <label for="pointAmount">포인트</label>
@@ -263,6 +267,15 @@
           </form>
           <p class="helper" id="shop-point-status"></p>
           <p class="error" id="shop-point-error"></p>
+
+          <form id="shop-point-csv-form" style="margin-top:16px">
+            <label for="pointCsvFile">포인트 CSV 일괄 지급 (이름 매칭)</label>
+            <input id="pointCsvFile" name="file" type="file" required accept=".csv,text/csv" />
+            <button type="submit" class="primary">CSV 포인트 지급</button>
+            <p class="helper">헤더: 이름(name/성명), 포인트(points/금액)</p>
+          </form>
+          <p class="helper" id="shop-point-csv-status"></p>
+          <p class="error" id="shop-point-csv-error"></p>
 
           <form id="shop-point-bulk-form" class="grid-form" style="margin-top:12px">
             <div>

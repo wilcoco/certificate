@@ -723,7 +723,11 @@ if (shopPointForm) {
     if (shopPointStatus) shopPointStatus.textContent = "";
 
     const fd = new FormData(shopPointForm);
-    const payload = { employeeId: fd.get("employeeId"), points: fd.get("points") };
+    const payload = {
+      employeeId: fd.get("employeeId") || "",
+      name: fd.get("name") || "",
+      points: fd.get("points"),
+    };
 
     try {
       const data = await fetchJson("/api/admin/points", { method: "POST", body: JSON.stringify(payload) });
@@ -780,6 +784,48 @@ const loadAdminOrders = async () => {
     console.error("관리자 주문 목록 로드 실패", error);
   }
 };
+
+const shopPointCsvForm = document.getElementById("shop-point-csv-form");
+const shopPointCsvStatus = document.getElementById("shop-point-csv-status");
+const shopPointCsvError = document.getElementById("shop-point-csv-error");
+
+if (shopPointCsvForm) {
+  shopPointCsvForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (shopPointCsvError) shopPointCsvError.textContent = "";
+    if (shopPointCsvStatus) shopPointCsvStatus.textContent = "";
+
+    const fileInput = document.getElementById("pointCsvFile");
+    const file = fileInput?.files?.[0];
+    if (!file) {
+      if (shopPointCsvError) shopPointCsvError.textContent = "CSV 파일을 선택해주세요.";
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+
+    const submitButton = shopPointCsvForm.querySelector("button");
+    const originalText = submitButton?.textContent;
+    if (submitButton) { submitButton.disabled = true; submitButton.textContent = "처리 중..."; }
+
+    try {
+      const response = await fetch("/api/admin/points/import-csv", { method: "POST", body: formData });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "실패");
+
+      let msg = `완료: ${data.updatedCount}명 포인트 지급`;
+      if (data.skippedCount > 0) msg += `, ${data.skippedCount}건 스킵(미매칭/오류)`;
+      if (data.duplicateCount > 0) msg += `, ${data.duplicateCount}건 동명이인(사번 지정 필요)`;
+      if (shopPointCsvStatus) shopPointCsvStatus.textContent = msg;
+      shopPointCsvForm.reset();
+    } catch (error) {
+      if (shopPointCsvError) shopPointCsvError.textContent = error.message;
+    } finally {
+      if (submitButton) { submitButton.disabled = false; submitButton.textContent = originalText; }
+    }
+  });
+}
 
 if (adminOrdersRefresh) {
   adminOrdersRefresh.addEventListener("click", () => loadAdminOrders());
