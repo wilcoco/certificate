@@ -445,14 +445,16 @@ const fetchOracleEmployees = async () => {
         : 'NULL AS "team"',
     ];
 
+    const empIdPrefix = process.env.ORACLE_EMP_ID_PREFIX || "103";
     const result = await connection.execute(
       `
         SELECT
           ${selectFragments.join(",\n          ")}
         FROM ${employeeTable} e
+        WHERE TRIM(e.${employeeIdColumn}) LIKE :prefix
         ORDER BY TRIM(e.${employeeIdColumn})
       `,
-      {},
+      { prefix: empIdPrefix + "%" },
       { outFormat: oracledb.OUT_FORMAT_OBJECT }
     );
 
