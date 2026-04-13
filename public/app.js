@@ -715,6 +715,117 @@ if (shopAddProductForm) {
 }
 
 // 관리자: 상품 목록
+const showEditForm = (product) => {
+  const existing = document.getElementById("product-edit-panel");
+  if (existing) existing.remove();
+
+  const panel = document.createElement("div");
+  panel.id = "product-edit-panel";
+  panel.style.cssText = "background:#f8f9fa;border:1px solid #ddd;border-radius:8px;padding:16px;margin:12px 0;";
+  const imgSrc = product.image_url || "";
+  panel.innerHTML = `
+    <h3 style="margin:0 0 12px">상품 수정 (ID: ${product.id})</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div>
+        <label style="font-size:13px;font-weight:600">상품명</label>
+        <input id="edit-p-name" type="text" value="${product.name}" style="width:100%;padding:6px;box-sizing:border-box" />
+      </div>
+      <div>
+        <label style="font-size:13px;font-weight:600">포인트 가격</label>
+        <input id="edit-p-price" type="number" value="${product.point_price}" style="width:100%;padding:6px;box-sizing:border-box" />
+      </div>
+      <div>
+        <label style="font-size:13px;font-weight:600">카테고리</label>
+        <input id="edit-p-category" type="text" value="${product.category || ""}" style="width:100%;padding:6px;box-sizing:border-box" />
+      </div>
+      <div>
+        <label style="font-size:13px;font-weight:600">재고 (-1=무제한)</label>
+        <input id="edit-p-stock" type="number" value="${product.stock}" style="width:100%;padding:6px;box-sizing:border-box" />
+      </div>
+      <div style="grid-column:1/-1">
+        <label style="font-size:13px;font-weight:600">설명</label>
+        <input id="edit-p-desc" type="text" value="${product.description || ""}" style="width:100%;padding:6px;box-sizing:border-box" />
+      </div>
+    </div>
+    <div style="display:flex;align-items:flex-start;gap:16px;margin-bottom:12px">
+      <div>
+        <label style="font-size:13px;font-weight:600">현재 이미지</label><br>
+        ${imgSrc ? `<img id="edit-p-preview" src="${imgSrc}" style="width:80px;height:80px;object-fit:cover;border-radius:6px;margin-top:4px">` : `<span id="edit-p-preview" style="color:#aaa;font-size:13px">없음</span>`}
+      </div>
+      <div style="flex:1">
+        <label style="font-size:13px;font-weight:600">새 이미지 업로드</label>
+        <input id="edit-p-file" type="file" accept="image/*" style="margin-top:4px;width:100%" />
+        <p id="edit-p-upload-status" style="font-size:12px;color:#666;margin:4px 0 0"></p>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button id="edit-p-save" style="padding:6px 20px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px">저장</button>
+      <button id="edit-p-cancel" style="padding:6px 20px;background:#6b7280;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px">취소</button>
+    </div>
+    <p id="edit-p-error" style="color:red;font-size:13px;margin:6px 0 0"></p>
+  `;
+
+  const wrap = document.getElementById("admin-products-wrap");
+  wrap.parentNode.insertBefore(panel, wrap);
+
+  // 파일 선택 시 미리보기
+  document.getElementById("edit-p-file").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const preview = document.getElementById("edit-p-preview");
+    if (preview.tagName === "IMG") {
+      preview.src = URL.createObjectURL(file);
+    } else {
+      const img = document.createElement("img");
+      img.src = URL.createObjectURL(file);
+      img.style.cssText = "width:80px;height:80px;object-fit:cover;border-radius:6px;margin-top:4px";
+      img.id = "edit-p-preview";
+      preview.replaceWith(img);
+    }
+  });
+
+  document.getElementById("edit-p-cancel").addEventListener("click", () => panel.remove());
+
+  document.getElementById("edit-p-save").addEventListener("click", async () => {
+    const saveBtn = document.getElementById("edit-p-save");
+    const errEl = document.getElementById("edit-p-error");
+    const statusEl = document.getElementById("edit-p-upload-status");
+    saveBtn.disabled = true;
+    saveBtn.textContent = "저장 중...";
+    errEl.textContent = "";
+
+    try {
+      let imageUrl = product.image_url || "";
+      const imageFile = document.getElementById("edit-p-file").files[0];
+      if (imageFile) {
+        statusEl.textContent = "이미지 업로드 중...";
+        imageUrl = await uploadProductImage(imageFile);
+        statusEl.textContent = "업로드 완료";
+      }
+
+      await fetchJson(`/api/admin/products/${product.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: document.getElementById("edit-p-name").value,
+          pointPrice: Number(document.getElementById("edit-p-price").value),
+          category: document.getElementById("edit-p-category").value,
+          description: document.getElementById("edit-p-desc").value,
+          imageUrl,
+          stock: Number(document.getElementById("edit-p-stock").value),
+          active: product.active,
+        }),
+      });
+      panel.remove();
+      loadAdminProducts();
+      loadShop();
+    } catch (err) {
+      errEl.textContent = "수정 실패: " + err.message;
+      saveBtn.disabled = false;
+      saveBtn.textContent = "저장";
+    }
+  });
+};
+
 const loadAdminProducts = async () => {
   if (!adminProductsTable) return;
   try {
@@ -734,64 +845,17 @@ const loadAdminProducts = async () => {
         <td>${p.stock < 0 ? "무제한" : p.stock}</td>
         <td>${p.active !== false ? "활성" : "비활성"}</td>
         <td>
-          <button class="btn-edit-product" data-id="${p.id}" style="font-size:12px;padding:2px 8px;margin:2px">수정</button>
-          <button class="btn-del-product" data-id="${p.id}" style="font-size:12px;padding:2px 8px;margin:2px;background:#e74c3c;color:#fff;border:none;border-radius:4px;cursor:pointer">삭제</button>
+          <button class="btn-edit-product" data-id="${p.id}" style="font-size:12px;padding:4px 10px;margin:2px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer">수정</button>
+          <button class="btn-del-product" data-id="${p.id}" style="font-size:12px;padding:4px 10px;margin:2px;background:#e74c3c;color:#fff;border:none;border-radius:4px;cursor:pointer">삭제</button>
         </td>
       `;
       adminProductsTable.appendChild(row);
     });
 
     adminProductsTable.querySelectorAll(".btn-edit-product").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const id = btn.dataset.id;
-        const product = (data.products || []).find((p) => String(p.id) === id);
-        if (!product) return;
-        const newName = prompt("상품명", product.name);
-        if (newName === null) return;
-        const newPrice = prompt("포인트 가격", product.point_price);
-        if (newPrice === null) return;
-        const newStock = prompt("재고 (-1=무제한)", product.stock);
-        if (newStock === null) return;
-
-        // 이미지: 파일 선택 다이얼로그
-        let newImage = product.image_url || "";
-        const wantImage = confirm("이미지를 변경하시겠습니까?");
-        if (wantImage) {
-          const fileInput = document.createElement("input");
-          fileInput.type = "file";
-          fileInput.accept = "image/*";
-          const filePromise = new Promise((resolve) => {
-            fileInput.onchange = () => resolve(fileInput.files[0] || null);
-            fileInput.click();
-            setTimeout(() => resolve(null), 60000);
-          });
-          const selectedFile = await filePromise;
-          if (selectedFile) {
-            try {
-              newImage = await uploadProductImage(selectedFile);
-            } catch (err) {
-              alert("이미지 업로드 실패: " + err.message);
-              return;
-            }
-          }
-        }
-
-        try {
-          await fetchJson(`/api/admin/products/${id}`, {
-            method: "PUT",
-            body: JSON.stringify({
-              name: newName,
-              pointPrice: Number(newPrice),
-              imageUrl: newImage,
-              stock: Number(newStock),
-              active: product.active,
-            }),
-          });
-          loadAdminProducts();
-          loadShop();
-        } catch (err) {
-          alert("수정 실패: " + err.message);
-        }
+      btn.addEventListener("click", () => {
+        const product = (data.products || []).find((p) => String(p.id) === btn.dataset.id);
+        if (product) showEditForm(product);
       });
     });
 
