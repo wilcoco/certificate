@@ -445,16 +445,19 @@ const fetchOracleEmployees = async () => {
         : 'NULL AS "team"',
     ];
 
-    const empIdPrefix = process.env.ORACLE_EMP_ID_PREFIX || "103";
+    const empIdPrefixes = (process.env.ORACLE_EMP_ID_PREFIXES || "103,2").split(",").map(s => s.trim()).filter(Boolean);
+    const whereClauses = empIdPrefixes.map((_, i) => `TRIM(e.${employeeIdColumn}) LIKE :p${i}`).join(" OR ");
+    const bindParams = {};
+    empIdPrefixes.forEach((p, i) => { bindParams[`p${i}`] = p + "%"; });
     const result = await connection.execute(
       `
         SELECT
           ${selectFragments.join(",\n          ")}
         FROM ${employeeTable} e
-        WHERE TRIM(e.${employeeIdColumn}) LIKE :prefix
+        WHERE ${whereClauses}
         ORDER BY TRIM(e.${employeeIdColumn})
       `,
-      { prefix: empIdPrefix + "%" },
+      bindParams,
       { outFormat: oracledb.OUT_FORMAT_OBJECT }
     );
 
