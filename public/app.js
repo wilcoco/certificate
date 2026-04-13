@@ -816,7 +816,8 @@ if (shopPointCsvForm) {
 
       let msg = `완료: ${data.updatedCount}명 포인트 지급`;
       if (data.skippedCount > 0) msg += `, ${data.skippedCount}건 스킵(미매칭/오류)`;
-      if (data.duplicateCount > 0) msg += `, ${data.duplicateCount}건 동명이인(사번 지정 필요)`;
+      if (data.multiMatchCount > 0) msg += `, ${data.multiMatchCount}건 동명(전원 지급)`;
+      if (data.debug) msg += ` [PG:${data.debug.pgCount} ORA:${data.debug.oracleCount} 합계:${data.debug.idMapSize}]`;
       if (shopPointCsvStatus) shopPointCsvStatus.textContent = msg;
       shopPointCsvForm.reset();
     } catch (error) {

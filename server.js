@@ -2472,9 +2472,17 @@ app.post(
         nameToEmployees.get(n).push(emp);
       }
 
+      const debug = {
+        pgCount: pgEmployees.length,
+        oracleCount: Array.isArray(oracleEmployees) ? oracleEmployees.length : 0,
+        idMapSize: idMap.size,
+        csvRows: lines.length - 1,
+      };
+      console.log("[포인트 CSV] 디버그:", JSON.stringify(debug));
+
       let updatedCount = 0;
       let skippedCount = 0;
-      let duplicateCount = 0;
+      let multiMatchCount = 0;
       const details = [];
 
       for (let i = 1; i < lines.length; i++) {
@@ -2494,36 +2502,33 @@ app.post(
           details.push({ name: rowName, reason: "not_found" });
           continue;
         }
+
         if (matches.length > 1) {
-          duplicateCount++;
-          details.push({
-            name: rowName,
-            reason: "duplicate",
-            employeeIds: matches.map((e) => e.employee_id),
-          });
-          continue;
+          multiMatchCount++;
+          console.log(`[포인트 CSV] 동명 "${rowName}" → ${matches.map(e => e.employee_id + '(' + e.source + ')').join(', ')}`);
         }
 
-        const target = matches[0];
-        // Postgres에 없으면 upsert
-        if (!pgIdSet.has(target.employee_id)) {
-          await pool.query(
-            `INSERT INTO employees (employee_id, name, team, password, join_date, points)
-             VALUES ($1, $2, $3, '0000', '2000-01-01', $4)
-             ON CONFLICT (employee_id) DO UPDATE SET points = $4`,
-            [target.employee_id, target.name, target.team || "", rowPoints]
-          );
-          pgIdSet.add(target.employee_id);
-        } else {
-          await pool.query(
-            "UPDATE employees SET points = $1 WHERE employee_id = $2",
-            [rowPoints, target.employee_id]
-          );
+        // 매칭된 전원에게 포인트 지급
+        for (const target of matches) {
+          if (!pgIdSet.has(target.employee_id)) {
+            await pool.query(
+              `INSERT INTO employees (employee_id, name, team, password, join_date, points)
+               VALUES ($1, $2, $3, '0000', '2000-01-01', $4)
+               ON CONFLICT (employee_id) DO UPDATE SET points = $4`,
+              [target.employee_id, target.name, target.team || "", rowPoints]
+            );
+            pgIdSet.add(target.employee_id);
+          } else {
+            await pool.query(
+              "UPDATE employees SET points = $1 WHERE employee_id = $2",
+              [rowPoints, target.employee_id]
+            );
+          }
         }
         updatedCount++;
       }
 
-      return res.json({ updatedCount, skippedCount, duplicateCount, details });
+      return res.json({ updatedCount, skippedCount, multiMatchCount, debug, details });
     } catch (error) {
       console.error("포인트 CSV 가져오기 실패", error);
       return res.status(500).json({ message: "CSV 포인트 지급에 실패했습니다." });
