@@ -803,16 +803,51 @@ app.post("/api/login", async (req, res) => {
           }
         }
       } else {
-        req.session.employee = {
-          employeeId,
-          name: resolvedOracleName || employeeId,
-          team: resolvedOracleTeam || "",
-          joinDate: "",
-          retirementDate: "",
-          isAdmin: false,
-          address: "",
-          residentNumber: resolvedOracleResidentNumber || "",
-        };
+        // Postgres에 행이 없으면 자동 생성 (포인트/구매 등 연동 위해)
+        try {
+          const { rows: upsertRows } = await pool.query(
+            `INSERT INTO employees (employee_id, name, team, password, join_date, points)
+             VALUES ($1, $2, $3, '0000', '2000-01-01', 0)
+             ON CONFLICT (employee_id) DO UPDATE SET
+               name = COALESCE(NULLIF($2, ''), employees.name),
+               team = COALESCE(NULLIF($3, ''), employees.team)
+             RETURNING *`,
+            [employeeId, resolvedOracleName || employeeId, resolvedOracleTeam || ""]
+          );
+          if (upsertRows.length) {
+            const mappedNew = mapEmployee(upsertRows[0]);
+            req.session.employee = {
+              ...mappedNew,
+              employeeId,
+              name: resolvedOracleName || mappedNew.name || employeeId,
+              team: resolvedOracleTeam || mappedNew.team || "",
+              residentNumber: resolvedOracleResidentNumber || "",
+            };
+          } else {
+            req.session.employee = {
+              employeeId,
+              name: resolvedOracleName || employeeId,
+              team: resolvedOracleTeam || "",
+              joinDate: "",
+              retirementDate: "",
+              isAdmin: false,
+              address: "",
+              residentNumber: resolvedOracleResidentNumber || "",
+            };
+          }
+        } catch (upsertError) {
+          console.error("Oracle 로그인 시 Postgres 행 생성 실패", upsertError);
+          req.session.employee = {
+            employeeId,
+            name: resolvedOracleName || employeeId,
+            team: resolvedOracleTeam || "",
+            joinDate: "",
+            retirementDate: "",
+            isAdmin: false,
+            address: "",
+            residentNumber: resolvedOracleResidentNumber || "",
+          };
+        }
       }
 
       return res.json({ employee: req.session.employee });
@@ -2171,13 +2206,32 @@ app.post("/api/orders", requireAuth, async (req, res) => {
       return res.status(400).json({ message: "재고가 부족합니다." });
     }
 
-    // 포인트 차감 (atomic)
+    // Postgres 행이 없으면 생성
+    const { rows: empCheck } = await pool.query(
+      "SELECT employee_id, points FROM employees WHERE employee_id = $1",
+      [employeeId]
+    );
+    if (!empCheck.length) {
+      await pool.query(
+        `INSERT INTO employees (employee_id, name, team, password, join_date, points)
+         VALUES ($1, $2, $3, '0000', '2000-01-01', 0)
+         ON CONFLICT (employee_id) DO NOTHING`,
+        [employeeId, req.session.employee.name || "", req.session.employee.team || ""]
+      );
+    }
+    console.log(`[구매] employee_id=${employeeId}, 현재포인트=${empCheck[0]?.points ?? 'N/A'}, 필요=${totalCost}`);
+
+    // 포인트 차감 (atomic, NULL 방어)
     const { rows: updateRows } = await pool.query(
-      "UPDATE employees SET points = points - $1 WHERE employee_id = $2 AND points >= $1 RETURNING points",
+      "UPDATE employees SET points = COALESCE(points, 0) - $1 WHERE employee_id = $2 AND COALESCE(points, 0) >= $1 RETURNING points",
       [totalCost, employeeId]
     );
     if (!updateRows.length) {
-      return res.status(400).json({ message: "포인트가 부족합니다." });
+      const { rows: currentPts } = await pool.query(
+        "SELECT points FROM employees WHERE employee_id = $1", [employeeId]
+      );
+      console.log(`[구매실패] employee_id=${employeeId}, DB포인트=${JSON.stringify(currentPts)}, 필요=${totalCost}`);
+      return res.status(400).json({ message: `포인트가 부족합니다. (보유: ${currentPts[0]?.points ?? 0}P, 필요: ${totalCost}P)` });
     }
 
     // 재고 차감
