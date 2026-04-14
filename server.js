@@ -1621,20 +1621,18 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
     return res.status(404).json({ message: "문서를 찾을 수 없습니다." });
   }
 
-  // 원천징수 영수증 외: 주민번호 뒷자리 검증
-  if (certificate.id !== "withholding") {
-    const residentBack = String(req.query.residentBack || "").trim();
-    const fullResident = String(req.session.employee.residentNumber || "").replace(/[^0-9]/g, "");
-    const actualBack = fullResident.length >= 13 ? fullResident.slice(6) : "";
-    if (!residentBack) {
-      return res.status(400).json({ message: "주민등록번호 뒷자리를 입력해주세요." });
-    }
-    if (!actualBack) {
-      return res.status(400).json({ message: "주민등록번호 정보가 등록되어 있지 않습니다. 관리자에게 문의하세요." });
-    }
-    if (residentBack.replace(/[^0-9]/g, "") !== actualBack) {
-      return res.status(403).json({ message: "주민등록번호 뒷자리가 일치하지 않습니다." });
-    }
+  // 본인 확인: 주민번호 뒷자리 검증 (모든 증명서 공통)
+  const residentBack = String(req.query.residentBack || "").trim();
+  const fullResident = String(req.session.employee.residentNumber || "").replace(/[^0-9]/g, "");
+  const actualBack = fullResident.length >= 13 ? fullResident.slice(6) : "";
+  if (!residentBack) {
+    return res.status(400).json({ message: "주민등록번호 뒷자리를 입력해주세요." });
+  }
+  if (!actualBack) {
+    return res.status(400).json({ message: "주민등록번호 정보가 등록되어 있지 않습니다. 관리자에게 문의하세요." });
+  }
+  if (residentBack.replace(/[^0-9]/g, "") !== actualBack) {
+    return res.status(403).json({ message: "주민등록번호 뒷자리가 일치하지 않습니다." });
   }
 
   if (certificate.id === "withholding") {
