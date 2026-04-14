@@ -752,6 +752,10 @@ const showEditForm = (product) => {
         <label style="font-size:13px;font-weight:600">설명</label>
         <input id="edit-p-desc" type="text" value="${product.description || ""}" style="width:100%;padding:6px;box-sizing:border-box" />
       </div>
+      <div>
+        <label style="font-size:13px;font-weight:600">공개 여부</label>
+        <label style="display:flex;align-items:center;gap:6px;margin-top:4px"><input id="edit-p-active" type="checkbox" ${product.active !== false ? "checked" : ""} /> 공개</label>
+      </div>
     </div>
     <div style="display:flex;align-items:flex-start;gap:16px;margin-bottom:12px">
       <div>
@@ -818,7 +822,7 @@ const showEditForm = (product) => {
           description: document.getElementById("edit-p-desc").value,
           imageUrl,
           stock: Number(document.getElementById("edit-p-stock").value),
-          active: product.active,
+          active: document.getElementById("edit-p-active").checked,
         }),
       });
       panel.remove();
@@ -849,7 +853,9 @@ const loadAdminProducts = async () => {
         <td>${p.name}</td>
         <td>${formatPoints(p.point_price)}</td>
         <td>${p.stock < 0 ? "무제한" : p.stock}</td>
-        <td>${p.active !== false ? "활성" : "비활성"}</td>
+        <td>
+          <button class="btn-toggle-product" data-id="${p.id}" style="font-size:12px;padding:4px 10px;margin:2px;background:${p.active !== false ? '#27ae60' : '#95a5a6'};color:#fff;border:none;border-radius:4px;cursor:pointer">${p.active !== false ? '공개' : '비공개'}</button>
+        </td>
         <td>
           <button class="btn-edit-product" data-id="${p.id}" style="font-size:12px;padding:4px 10px;margin:2px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer">수정</button>
           <button class="btn-del-product" data-id="${p.id}" style="font-size:12px;padding:4px 10px;margin:2px;background:#e74c3c;color:#fff;border:none;border-radius:4px;cursor:pointer">삭제</button>
@@ -862,6 +868,23 @@ const loadAdminProducts = async () => {
       btn.addEventListener("click", () => {
         const product = (data.products || []).find((p) => String(p.id) === btn.dataset.id);
         if (product) showEditForm(product);
+      });
+    });
+
+    adminProductsTable.querySelectorAll(".btn-toggle-product").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const product = (data.products || []).find((p) => String(p.id) === btn.dataset.id);
+        if (!product) return;
+        try {
+          await fetchJson(`/api/admin/products/${product.id}`, {
+            method: "PUT",
+            body: JSON.stringify({ ...product, pointPrice: product.point_price, imageUrl: product.image_url, active: product.active === false }),
+          });
+          loadAdminProducts();
+          loadShop();
+        } catch (err) {
+          alert("상태 변경 실패: " + err.message);
+        }
       });
     });
 
