@@ -14,7 +14,6 @@ const employeeError = document.getElementById("employee-error");
 const employeeTable = document.getElementById("employee-table");
 const employeeSearch = document.getElementById("employee-search");
 const adminBadge = document.getElementById("admin-badge");
-const maskResidentNumberToggle = document.getElementById("mask-resident-number");
 
 const withholdingUploadForm = document.getElementById(
   "withholding-upload-form"
@@ -365,9 +364,8 @@ certificateList.addEventListener("click", async (event) => {
       residentBack = residentBack.trim();
     }
 
-    const maskResidentNumber = maskResidentNumberToggle?.checked ? "1" : "0";
     const response = await fetch(
-      `/api/certificates/${id}?maskResidentNumber=${encodeURIComponent(maskResidentNumber)}${residentBack ? `&residentBack=${encodeURIComponent(residentBack)}` : ""}`
+      `/api/certificates/${id}?${residentBack ? `residentBack=${encodeURIComponent(residentBack)}` : ""}`
     );
     if (!response.ok) {
       const data = await response.json();

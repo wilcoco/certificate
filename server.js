@@ -1746,12 +1746,7 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
     const verifyUrl = `${baseUrl}/verify/${encodeURIComponent(documentNumber)}`;
 
     const residentNumberRaw = String(req.session.employee.residentNumber || "").trim();
-    const shouldMaskResidentNumber = parseMaskResidentNumber(
-      req.query.maskResidentNumber
-    );
-    const residentNumberForVerify = shouldMaskResidentNumber
-      ? maskResidentNumber(residentNumberRaw)
-      : residentNumberRaw;
+    const residentNumberForVerify = maskResidentNumber(residentNumberRaw);
     const residentNumberForPdf = residentNumberRaw;
 
     const issuePayload = {
