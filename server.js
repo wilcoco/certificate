@@ -945,6 +945,45 @@ app.get("/api/me", requireAuth, async (req, res) => {
   });
 });
 
+// [임시] Oracle 테이블 컬럼 탐색 API
+app.get("/api/admin/oracle-columns", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const oraclePool = await getOraclePool();
+    if (!oraclePool) return res.status(400).json({ message: "Oracle 미설정" });
+    const employeeTable = normalizeOracleIdentifier(process.env.ORACLE_EMP_TABLE);
+    const connection = await oraclePool.getConnection();
+    try {
+      // 컬럼 목록
+      const colResult = await connection.execute(
+        `SELECT COLUMN_NAME, DATA_TYPE FROM ALL_TAB_COLUMNS WHERE TABLE_NAME = :t ORDER BY COLUMN_ID`,
+        { t: employeeTable.toUpperCase() },
+        { outFormat: oracledb.OUT_FORMAT_OBJECT }
+      );
+      // 샘플 1행
+      const sampleResult = await connection.execute(
+        `SELECT * FROM ${employeeTable} WHERE ROWNUM <= 3`,
+        {},
+        { outFormat: oracledb.OUT_FORMAT_OBJECT }
+      );
+      const sampleRows = [];
+      for (const row of (sampleResult.rows || [])) {
+        const cleaned = {};
+        for (const [k, v] of Object.entries(row)) {
+          cleaned[k] = v && typeof v === "object" && typeof v.getData === "function"
+            ? await v.getData() : v;
+        }
+        sampleRows.push(cleaned);
+      }
+      return res.json({ columns: colResult.rows, sample: sampleRows });
+    } finally {
+      await connection.close();
+    }
+  } catch (error) {
+    console.error("Oracle 컬럼 탐색 실패", error);
+    return res.status(500).json({ message: error.message });
+  }
+});
+
 app.get("/api/employees", requireAuth, requireAdmin, async (req, res) => {
   if (isOracleAuthConfigured()) {
     try {
