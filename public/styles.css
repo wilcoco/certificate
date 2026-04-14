@@ -459,9 +459,13 @@ tbody tr:last-child td {
 }
 
 .shop-product button {
-  margin: 8px 14px 14px;
+  margin: 0 14px 14px;
   min-height: 42px;
   font-size: 0.9rem;
+  width: calc(100% - 28px);
+  box-sizing: border-box;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .shop-empty {
@@ -482,6 +486,13 @@ tbody tr:last-child td {
 
   .shop-product__body {
     padding: 10px;
+  }
+
+  .shop-product button {
+    margin: 0 10px 10px;
+    width: calc(100% - 20px);
+    min-height: 38px;
+    font-size: 0.82rem;
   }
 }
 
