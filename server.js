@@ -60,11 +60,17 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
+      secure: !!(process.env.RAILWAY_ENVIRONMENT || process.env.NODE_ENV === "production"),
+      sameSite: "lax",
       maxAge: 1000 * 60 * 30,
     },
   })
 );
 
+app.use((req, res, next) => {
+  res.setHeader("Content-Security-Policy", "upgrade-insecure-requests");
+  next();
+});
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/assets", express.static(path.join(__dirname, "assets")));
 // 이미지는 Postgres DB에 저장 (재배포 시 유지)
