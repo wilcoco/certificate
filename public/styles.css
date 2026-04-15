@@ -1,13 +1,14 @@
 :root {
   color-scheme: light;
-  --bg: #f7f1ea;
+  --bg: #eef1f6;
   --surface: #ffffff;
   --ink: #1d1f22;
-  --muted: #6a6f76;
-  --accent: #d56c4a;
-  --accent-dark: #b14e2d;
-  --line: #e4ddd4;
-  --shadow: 0 18px 40px rgba(29, 31, 34, 0.12);
+  --muted: #5f6a78;
+  --accent: #1a3d8f;
+  --accent-dark: #122c6a;
+  --accent-red: #d42027;
+  --line: #d4dae3;
+  --shadow: 0 18px 40px rgba(26, 61, 143, 0.10);
   --radius: 22px;
 }
 
@@ -18,7 +19,7 @@
 body {
   margin: 0;
   font-family: "IBM Plex Sans", system-ui, sans-serif;
-  background: radial-gradient(circle at top, #fcebd5 0%, #f7f1ea 45%, #efe7df 100%);
+  background: radial-gradient(circle at top, #dce3f0 0%, #eef1f6 45%, #e8ecf2 100%);
   color: var(--ink);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
@@ -36,8 +37,8 @@ body {
 
 .hero {
   padding: 36px 24px 20px;
-  background: linear-gradient(160deg, #1f252d 0%, #3a2b25 55%, #b8734b 100%);
-  color: #fff3e6;
+  background: linear-gradient(160deg, #0d1b3e 0%, #1a3d8f 55%, #2956a8 100%);
+  color: #eef2ff;
   border-bottom-left-radius: 36px;
   border-bottom-right-radius: 36px;
 }
@@ -60,7 +61,7 @@ body {
   flex: 0 0 auto;
   padding: 8px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .hero__label {
@@ -79,7 +80,7 @@ body {
 
 .hero__subtitle {
   margin: 0;
-  color: rgba(255, 243, 230, 0.82);
+  color: rgba(238, 242, 255, 0.82);
   line-height: 1.5;
 }
 
@@ -119,7 +120,7 @@ input {
   border-radius: 16px;
   border: 1px solid var(--line);
   font-size: 1rem;
-  background: #faf7f3;
+  background: #f5f7fb;
   -webkit-appearance: none;
   -moz-appearance: none;
   appearance: none;
@@ -129,7 +130,7 @@ input {
 input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(213, 108, 74, 0.1);
+  box-shadow: 0 0 0 3px rgba(26, 61, 143, 0.12);
 }
 
 button {
@@ -149,19 +150,19 @@ button {
 button.primary {
   background: var(--accent);
   color: white;
-  box-shadow: 0 10px 22px rgba(213, 108, 74, 0.35);
+  box-shadow: 0 10px 22px rgba(26, 61, 143, 0.30);
 }
 
 button.primary:hover,
 button.primary:focus {
   background: var(--accent-dark);
   transform: translateY(-1px);
-  box-shadow: 0 12px 26px rgba(213, 108, 74, 0.4);
+  box-shadow: 0 12px 26px rgba(26, 61, 143, 0.35);
 }
 
 button.primary:active {
   transform: translateY(0);
-  box-shadow: 0 8px 20px rgba(213, 108, 74, 0.35);
+  box-shadow: 0 8px 20px rgba(26, 61, 143, 0.30);
 }
 
 button.ghost {
@@ -195,8 +196,8 @@ button.ghost:focus {
   margin-top: 14px;
   padding: 6px 12px;
   border-radius: 999px;
-  background: #1f252d;
-  color: #fff3e6;
+  background: #1a3d8f;
+  color: #fff;
   font-size: 0.75rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -216,7 +217,7 @@ button.ghost:focus {
 .status {
   margin-top: 18px;
   padding: 16px;
-  background: #f7f1ea;
+  background: #eef1f6;
   border-radius: 16px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -292,12 +293,12 @@ td {
 }
 
 .action-group button.secondary {
-  background: #f0e6dc;
+  background: #dce3f0;
   color: var(--ink);
 }
 
 th {
-  background: #f7f1ea;
+  background: #eef1f6;
   font-weight: 600;
 }
 
@@ -311,7 +312,7 @@ tbody tr:last-child td {
   border: 1px solid var(--line);
   display: grid;
   gap: 12px;
-  background: #fffaf4;
+  background: #f8faff;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -339,7 +340,7 @@ tbody tr:last-child td {
 .certificate button:hover,
 .certificate button:focus {
   transform: translateY(-1px);
-  box-shadow: 0 8px 20px rgba(213, 108, 74, 0.3);
+  box-shadow: 0 8px 20px rgba(26, 61, 143, 0.25);
 }
 
 .certificate button:active {
@@ -387,7 +388,7 @@ tbody tr:last-child td {
   align-items: center;
   padding: 8px 16px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #d56c4a 0%, #b14e2d 100%);
+  background: linear-gradient(135deg, #d42027 0%, #b01a20 100%);
   color: #fff;
   font-size: 1rem;
   font-weight: 700;
@@ -405,7 +406,7 @@ tbody tr:last-child td {
 .shop-product {
   border-radius: 16px;
   border: 1px solid var(--line);
-  background: #fffaf4;
+  background: #f8faff;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -421,7 +422,7 @@ tbody tr:last-child td {
   width: 100%;
   height: 140px;
   object-fit: cover;
-  background: #f0e6dc;
+  background: #dce3f0;
 }
 
 .shop-product__body {
