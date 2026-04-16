@@ -381,10 +381,7 @@ const fetchOracleEmployeeProfile = async (employeeId) => {
     process.env.ORACLE_EMP_COL_RESIDENT_NUMBER,
     "BSCJUMNO"
   );
-  const employeeJobGroupColumn = getOptionalOracleIdentifier(
-    process.env.ORACLE_EMP_COL_JOB_GROUP,
-    "BSCJGN"
-  );
+  const deptTable = normalizeOracleIdentifier(process.env.ORACLE_DEPT_TABLE || "T_XX_DPT");
 
   let connection;
   try {
@@ -397,9 +394,7 @@ const fetchOracleEmployeeProfile = async (employeeId) => {
       employeeResidentNumberColumn
         ? `e.${employeeResidentNumberColumn} AS "residentNumber"`
         : 'NULL AS "residentNumber"',
-      employeeJobGroupColumn
-        ? `e.${employeeJobGroupColumn} AS "jobGroup"`
-        : 'NULL AS "jobGroup"',
+      `d.DPTDPTN AS "jobGroup"`,
     ];
 
     const result = await connection.execute(
@@ -407,6 +402,7 @@ const fetchOracleEmployeeProfile = async (employeeId) => {
         SELECT
           ${selectFragments.join(",\n          ")}
         FROM ${employeeTable} e
+        LEFT JOIN ${deptTable} d ON e.BSCDPTCOD = d.DPTDPTCOD AND e.BSCDIVCOD = d.DPTDIVCOD
         WHERE TRIM(e.${employeeIdColumn}) = :employeeId
       `,
       { employeeId },
@@ -446,10 +442,7 @@ const fetchOracleEmployees = async () => {
     process.env.ORACLE_EMP_COL_NAME,
     "BSCNAME"
   );
-  const employeeJobGroupColumn = getOptionalOracleIdentifier(
-    process.env.ORACLE_EMP_COL_JOB_GROUP,
-    "BSCJGN"
-  );
+  const deptTable = normalizeOracleIdentifier(process.env.ORACLE_DEPT_TABLE || "T_XX_DPT");
 
   let connection;
   try {
@@ -459,9 +452,7 @@ const fetchOracleEmployees = async () => {
       employeeNameColumn
         ? `e.${employeeNameColumn} AS "name"`
         : 'NULL AS "name"',
-      employeeJobGroupColumn
-        ? `e.${employeeJobGroupColumn} AS "team"`
-        : 'NULL AS "team"',
+      `d.DPTDPTN AS "team"`,
     ];
 
     const empIdPrefixes = (process.env.ORACLE_EMP_ID_PREFIXES || "103,2").split(",").map(s => s.trim()).filter(Boolean);
@@ -473,6 +464,7 @@ const fetchOracleEmployees = async () => {
         SELECT
           ${selectFragments.join(",\n          ")}
         FROM ${employeeTable} e
+        LEFT JOIN ${deptTable} d ON e.BSCDPTCOD = d.DPTDPTCOD AND e.BSCDIVCOD = d.DPTDIVCOD
         WHERE ${whereClauses}
         ORDER BY TRIM(e.${employeeIdColumn})
       `,
