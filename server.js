@@ -396,6 +396,8 @@ const fetchOracleEmployeeProfile = async (employeeId) => {
         : 'NULL AS "residentNumber"',
       `d.DPTDPTN AS "jobGroup"`,
       `e.BSCJUSO AS "address"`,
+      `e.BSCGIYMD AS "joinDate"`,
+      `e.BSCRTYMD AS "retirementDate"`,
     ];
 
     const result = await connection.execute(
@@ -416,6 +418,8 @@ const fetchOracleEmployeeProfile = async (employeeId) => {
     row.residentNumber = await readOracleTextValue(row.residentNumber);
     row.jobGroup = await readOracleTextValue(row.jobGroup);
     row.address = await readOracleTextValue(row.address);
+    row.joinDate = await readOracleTextValue(row.joinDate);
+    row.retirementDate = await readOracleTextValue(row.retirementDate);
     return row;
   } finally {
     if (connection) {
@@ -605,6 +609,8 @@ const fetchOracleLoginRecord = async (employeeId) => {
         : 'NULL AS "residentNumber"',
       `d.DPTDPTN AS "jobGroup"`,
       `e.BSCJUSO AS "address"`,
+      `e.BSCGIYMD AS "joinDate"`,
+      `e.BSCRTYMD AS "retirementDate"`,
       `p.${passwordValueColumn} AS "etc6"`,
     ];
 
@@ -657,6 +663,8 @@ const fetchOracleLoginRecord = async (employeeId) => {
     row.residentNumber = await readOracleTextValue(row.residentNumber);
     row.jobGroup = await readOracleTextValue(row.jobGroup);
     row.address = await readOracleTextValue(row.address);
+    row.joinDate = await readOracleTextValue(row.joinDate);
+    row.retirementDate = await readOracleTextValue(row.retirementDate);
     if (fallbackDiagnostics) {
       row.__oracleFallbackDiagnostics = fallbackDiagnostics;
     }
@@ -743,6 +751,8 @@ app.post("/api/login", async (req, res) => {
       const oracleResidentNumber = normalizeString(oracleRecord.residentNumber);
       const oracleJobGroup = normalizeString(oracleRecord.jobGroup);
       const oracleAddress = normalizeString(oracleRecord.address);
+      const oracleJoinDate = normalizeString(oracleRecord.joinDate);
+      const oracleRetirementDate = normalizeString(oracleRecord.retirementDate);
       let oracleProfile = null;
       if (!oracleName || !oracleResidentNumber || !oracleJobGroup) {
         try {
@@ -758,11 +768,23 @@ app.post("/api/login", async (req, res) => {
       );
       const oracleProfileJobGroup = normalizeString(oracleProfile?.jobGroup);
       const oracleProfileAddress = normalizeString(oracleProfile?.address);
+      const oracleProfileJoinDate = normalizeString(oracleProfile?.joinDate);
+      const oracleProfileRetirementDate = normalizeString(oracleProfile?.retirementDate);
       const resolvedOracleName = oracleProfileName || oracleName;
       const resolvedOracleResidentNumber =
         oracleProfileResidentNumber || oracleResidentNumber;
       const resolvedOracleTeam = oracleProfileJobGroup || oracleJobGroup;
       const resolvedOracleAddress = oracleProfileAddress || oracleAddress;
+      const resolvedOracleJoinDate = oracleProfileJoinDate || oracleJoinDate;
+      const resolvedOracleRetirementDate = oracleProfileRetirementDate || oracleRetirementDate;
+
+      // BSCGIYMD 형식: "YYYYMMDD" → "YYYY-MM-DD"
+      const formatOracleDate = (d) => {
+        if (!d) return "";
+        const digits = d.replace(/[^0-9]/g, "");
+        if (digits.length === 8) return `${digits.slice(0,4)}-${digits.slice(4,6)}-${digits.slice(6,8)}`;
+        return d;
+      };
 
       if (employee) {
         const mappedEmployee = mapEmployee(employee);
@@ -772,6 +794,8 @@ app.post("/api/login", async (req, res) => {
           name: resolvedOracleName || mappedEmployee.name,
           team: resolvedOracleTeam || mappedEmployee.team,
           address: resolvedOracleAddress || mappedEmployee.address || "",
+          joinDate: formatOracleDate(resolvedOracleJoinDate) || mappedEmployee.joinDate || "",
+          retirementDate: formatOracleDate(resolvedOracleRetirementDate) || mappedEmployee.retirementDate || "",
           residentNumber:
             mappedEmployee.residentNumber || resolvedOracleResidentNumber || "",
         };
@@ -824,6 +848,8 @@ app.post("/api/login", async (req, res) => {
               name: resolvedOracleName || mappedNew.name || employeeId,
               team: resolvedOracleTeam || mappedNew.team || "",
               address: resolvedOracleAddress || mappedNew.address || "",
+              joinDate: formatOracleDate(resolvedOracleJoinDate) || mappedNew.joinDate || "",
+              retirementDate: formatOracleDate(resolvedOracleRetirementDate) || mappedNew.retirementDate || "",
               residentNumber: resolvedOracleResidentNumber || "",
             };
           } else {
@@ -831,8 +857,8 @@ app.post("/api/login", async (req, res) => {
               employeeId,
               name: resolvedOracleName || employeeId,
               team: resolvedOracleTeam || "",
-              joinDate: "",
-              retirementDate: "",
+              joinDate: formatOracleDate(resolvedOracleJoinDate) || "",
+              retirementDate: formatOracleDate(resolvedOracleRetirementDate) || "",
               isAdmin: false,
               address: resolvedOracleAddress || "",
               residentNumber: resolvedOracleResidentNumber || "",
@@ -844,8 +870,8 @@ app.post("/api/login", async (req, res) => {
             employeeId,
             name: resolvedOracleName || employeeId,
             team: resolvedOracleTeam || "",
-            joinDate: "",
-            retirementDate: "",
+            joinDate: formatOracleDate(resolvedOracleJoinDate) || "",
+            retirementDate: formatOracleDate(resolvedOracleRetirementDate) || "",
             isAdmin: false,
             address: resolvedOracleAddress || "",
             residentNumber: resolvedOracleResidentNumber || "",
