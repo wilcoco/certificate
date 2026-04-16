@@ -965,22 +965,53 @@ app.get("/api/admin/oracle-columns", requireAuth, requireAdmin, async (req, res)
         { t: employeeTable.toUpperCase() },
         { outFormat: oracledb.OUT_FORMAT_OBJECT }
       );
-      // 샘플 1행
-      const sampleResult = await connection.execute(
-        `SELECT * FROM ${employeeTable} WHERE ROWNUM <= 3`,
-        {},
-        { outFormat: oracledb.OUT_FORMAT_OBJECT }
-      );
-      const sampleRows = [];
-      for (const row of (sampleResult.rows || [])) {
-        const cleaned = {};
-        for (const [k, v] of Object.entries(row)) {
-          cleaned[k] = v && typeof v === "object" && typeof v.getData === "function"
-            ? await v.getData() : v;
-        }
-        sampleRows.push(cleaned);
+      // 부서코드 샘플 (BSCDPTCOD distinct 값)
+      let deptCodes = [];
+      try {
+        const deptResult = await connection.execute(
+          `SELECT DISTINCT BSCDPTCOD FROM ${employeeTable} WHERE ROWNUM <= 30`,
+          {},
+          { outFormat: oracledb.OUT_FORMAT_OBJECT }
+        );
+        deptCodes = (deptResult.rows || []).map(r => r.BSCDPTCOD);
+      } catch (e) { deptCodes = ["error: " + e.message]; }
+      // 부서 관련 테이블 탐색
+      let deptTables = [];
+      try {
+        const tblResult = await connection.execute(
+          `SELECT TABLE_NAME FROM ALL_TABLES WHERE UPPER(TABLE_NAME) LIKE '%DPT%' OR UPPER(TABLE_NAME) LIKE '%DEPT%' OR UPPER(TABLE_NAME) LIKE '%부서%'`,
+          {},
+          { outFormat: oracledb.OUT_FORMAT_OBJECT }
+        );
+        deptTables = (tblResult.rows || []).map(r => r.TABLE_NAME);
+      } catch (e) { deptTables = ["error: " + e.message]; }
+      // 부서 테이블이 있으면 컬럼+샘플 조회
+      let deptTableDetails = {};
+      for (const dt of deptTables.slice(0, 5)) {
+        try {
+          const dtCols = await connection.execute(
+            `SELECT COLUMN_NAME, DATA_TYPE FROM ALL_TAB_COLUMNS WHERE TABLE_NAME = :t ORDER BY COLUMN_ID`,
+            { t: dt },
+            { outFormat: oracledb.OUT_FORMAT_OBJECT }
+          );
+          const dtSample = await connection.execute(
+            `SELECT * FROM ${dt} WHERE ROWNUM <= 5`,
+            {},
+            { outFormat: oracledb.OUT_FORMAT_OBJECT }
+          );
+          const sRows = [];
+          for (const row of (dtSample.rows || [])) {
+            const cleaned = {};
+            for (const [k, v] of Object.entries(row)) {
+              cleaned[k] = v && typeof v === "object" && typeof v.getData === "function"
+                ? await v.getData() : v;
+            }
+            sRows.push(cleaned);
+          }
+          deptTableDetails[dt] = { columns: dtCols.rows, sample: sRows };
+        } catch (e) { deptTableDetails[dt] = { error: e.message }; }
       }
-      return res.json({ columns: colResult.rows, sample: sampleRows });
+      return res.json({ empColumns: colResult.rows, deptCodes, deptTables, deptTableDetails });
     } finally {
       await connection.close();
     }
