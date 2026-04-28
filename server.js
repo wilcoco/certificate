@@ -2006,7 +2006,18 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
 
     const residentNumberRaw = String(req.session.employee.residentNumber || "").trim();
     const residentNumberForVerify = maskResidentNumber(residentNumberRaw);
-    const residentNumberForPdf = residentNumberRaw;
+    // 주민번호에서 생년월일 추출 (YYMMDD + 뒷자리 첫숫자로 세기 판별)
+    const birthDateForPdf = (() => {
+      const digits = residentNumberRaw.replace(/[^0-9]/g, "");
+      if (digits.length < 7) return "-";
+      const yy = digits.slice(0, 2);
+      const mm = digits.slice(2, 4);
+      const dd = digits.slice(4, 6);
+      const genderDigit = parseInt(digits[6], 10);
+      // 1,2,5,6 → 1900년대, 3,4,7,8 → 2000년대
+      const century = (genderDigit >= 3 && genderDigit <= 4) || (genderDigit >= 7 && genderDigit <= 8) ? "20" : "19";
+      return `${century}${yy}.${mm}.${dd}`;
+    })();
 
     const issuePayload = {
       documentNumber,
@@ -2108,7 +2119,7 @@ app.get("/api/certificates/:id", requireAuth, async (req, res) => {
 
     const infoRows = [
       ["성    명", req.session.employee.name],
-      ["주민등록번호", residentNumberForPdf],
+      ["생 년 월 일", birthDateForPdf],
       ["주    소", req.session.employee.address || "-"],
       ["소 속 부 서", req.session.employee.team],
       ["입 사 일 자", req.session.employee.joinDate],
@@ -2269,9 +2280,21 @@ app.get("/verify/:documentNumber", async (req, res) => {
       payload?.issuedAtText || new Date(issue.issued_at).toLocaleString("ko-KR");
     const employee = payload?.employee || {};
 
+    // 진위확인에서도 생년월일만 표시
+    const verifyBirthDate = (() => {
+      const raw = String(employee.residentNumber || "").replace(/[^0-9]/g, "");
+      if (raw.length < 7) return "-";
+      const yy = raw.slice(0, 2);
+      const mm = raw.slice(2, 4);
+      const dd = raw.slice(4, 6);
+      const g = parseInt(raw[6], 10);
+      const century = (g >= 3 && g <= 4) || (g >= 7 && g <= 8) ? "20" : "19";
+      return `${century}${yy}.${mm}.${dd}`;
+    })();
+
     const verificationRows = [
       ["성명", employee.name],
-      ["주민등록번호", employee.residentNumber],
+      ["생년월일", verifyBirthDate],
       ["주소", employee.address],
       ["소속팀", employee.team],
       ["입사일자", employee.joinDate],
