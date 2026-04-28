@@ -368,43 +368,7 @@ certificateList.addEventListener("click", async (event) => {
       throw new Error(data.message || "다운로드 실패");
     }
     const blob = await response.blob();
-    
-    // 모바일에서 파일 다운로드 처리
-    const isPdfBlob = blob.type === 'application/pdf';
-    let handled = false;
-
-    if (typeof navigator.share === 'function' && isPdfBlob) {
-      const file = new File([blob], filename, { type: 'application/pdf' });
-      const canShareFiles =
-        typeof navigator.canShare !== 'function'
-          ? true
-          : (() => {
-              try {
-                return navigator.canShare({ files: [file] });
-              } catch (canShareError) {
-                return false;
-              }
-            })();
-
-      if (canShareFiles) {
-        try {
-          await navigator.share({
-            title: `${certificate?.title}`,
-            text: '문서가 발급되었습니다.',
-            files: [file],
-          });
-          handled = true;
-        } catch (shareError) {
-          // 공유 실패 시 기본 다운로드
-          downloadFile(blob, filename);
-          handled = true;
-        }
-      }
-    }
-
-    if (!handled) {
-      downloadFile(blob, filename);
-    }
+    downloadFile(blob, filename);
 
     state.lastIssued = new Date().toLocaleDateString("ko-KR");
     lastIssued.textContent = state.lastIssued;
@@ -418,20 +382,6 @@ certificateList.addEventListener("click", async (event) => {
 
 const downloadFile = (blob, filename) => {
   const url = window.URL.createObjectURL(blob);
-  const userAgent = navigator.userAgent || "";
-  const platform = navigator.platform || "";
-  const isIOS =
-    /iPad|iPhone|iPod/.test(userAgent) ||
-    (platform === "MacIntel" && navigator.maxTouchPoints > 1);
-
-  if (isIOS) {
-    window.location.href = url;
-    setTimeout(() => {
-      window.URL.revokeObjectURL(url);
-    }, 60000);
-    return;
-  }
-
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
@@ -439,7 +389,7 @@ const downloadFile = (blob, filename) => {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  window.URL.revokeObjectURL(url);
+  setTimeout(() => window.URL.revokeObjectURL(url), 5000);
 };
 
 logoutButton.addEventListener("click", async () => {
