@@ -1604,6 +1604,122 @@ app.post(
   }
 );
 
+// 원천징수영수증 진단 API
+app.get("/api/admin/withholding-receipts/diagnose", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const queryName = normalizeString(req.query.name);
+    const queryId = normalizeString(req.query.employeeId);
+    if (!queryName && !queryId) {
+      return res.status(400).json({ message: "name 또는 employeeId 파라미터가 필요합니다." });
+    }
+
+    // 1. Postgres employees에서 검색
+    const { rows: pgRows } = await pool.query(
+      "SELECT employee_id, name, team, resident_number FROM employees"
+    );
+    const pgMatches = pgRows.filter(r => {
+      if (queryId && normalizeString(r.employee_id) === queryId) return true;
+      if (queryName && normalizeString(r.name) === queryName) return true;
+      return false;
+    });
+
+    // 2. Oracle에서 검색
+    let oracleMatches = [];
+    try {
+      const allOracle = await fetchOracleEmployees();
+      if (allOracle) {
+        oracleMatches = allOracle.filter(r => {
+          if (queryId && normalizeString(r.employeeId) === queryId) return true;
+          if (queryName && normalizeString(r.name) === queryName) return true;
+          return false;
+        });
+      }
+    } catch (e) { oracleMatches = [{ error: e.message }]; }
+
+    // 3. Oracle 주민번호 조회
+    let oracleResidentInfo = [];
+    try {
+      const oracleWithResident = await fetchOracleEmployeesWithResidentNumbers();
+      if (oracleWithResident) {
+        const targetIds = new Set([
+          ...pgMatches.map(r => normalizeString(r.employee_id)),
+          ...oracleMatches.filter(r => r.employeeId).map(r => normalizeString(r.employeeId)),
+        ]);
+        oracleResidentInfo = oracleWithResident
+          .filter(r => targetIds.has(normalizeString(r.employeeId)))
+          .map(r => ({
+            employeeId: r.employeeId,
+            hasResident: r.residentDigits?.length === 13,
+            residentHash: r.residentDigits?.length === 13 ? hashResidentDigits(r.residentDigits) : null,
+          }));
+      }
+    } catch (e) { oracleResidentInfo = [{ error: e.message }]; }
+
+    // 4. withholding_receipts 확인
+    const targetIds = [
+      ...pgMatches.map(r => r.employee_id),
+      ...oracleMatches.filter(r => r.employeeId).map(r => r.employeeId),
+    ];
+    const uniqueIds = [...new Set(targetIds)];
+    let linkedReceipts = [];
+    for (const eid of uniqueIds) {
+      const { rows } = await pool.query(
+        "SELECT employee_id, tax_year, resident_number_hash, uploaded_at FROM withholding_receipts WHERE employee_id = $1",
+        [eid]
+      );
+      linkedReceipts.push(...rows.map(r => ({ ...r, pdf_bytes: undefined })));
+    }
+
+    // 5. withholding_receipts_staged에서 해시 매칭 확인
+    const targetHashes = oracleResidentInfo
+      .filter(r => r.residentHash)
+      .map(r => r.residentHash);
+    const pgHashes = pgMatches
+      .filter(r => r.resident_number)
+      .map(r => {
+        const digits = normalizeResidentDigits(r.resident_number);
+        return digits.length === 13 ? hashResidentDigits(digits) : null;
+      })
+      .filter(Boolean);
+    const allHashes = [...new Set([...targetHashes, ...pgHashes])];
+
+    let stagedMatches = [];
+    if (allHashes.length > 0) {
+      const { rows: allStaged } = await pool.query(
+        "SELECT resident_number_hash, tax_year, uploaded_at FROM withholding_receipts_staged"
+      );
+      stagedMatches = allStaged.filter(r => allHashes.includes(r.resident_number_hash));
+    }
+
+    // 6. 전체 스테이징 건수
+    const { rows: stagedCount } = await pool.query(
+      "SELECT COUNT(*) as cnt FROM withholding_receipts_staged"
+    );
+
+    return res.json({
+      query: { name: queryName, employeeId: queryId },
+      postgres: pgMatches.map(r => ({
+        employee_id: r.employee_id,
+        name: r.name,
+        team: r.team,
+        hasResidentNumber: !!r.resident_number,
+        residentHash: r.resident_number ? (() => {
+          const d = normalizeResidentDigits(r.resident_number);
+          return d.length === 13 ? hashResidentDigits(d) : "invalid_length_" + d.length;
+        })() : null,
+      })),
+      oracle: oracleMatches,
+      oracleResident: oracleResidentInfo,
+      linkedReceipts,
+      stagedMatches,
+      stagedTotalCount: Number(stagedCount[0]?.cnt || 0),
+    });
+  } catch (error) {
+    console.error("원천징수 진단 실패", error);
+    return res.status(500).json({ message: error.message });
+  }
+});
+
 app.post(
   "/api/admin/withholding-receipts/link",
   requireAuth,
