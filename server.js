@@ -1502,16 +1502,27 @@ app.post(
         }
 
         if (!mapping.existsInEmployees) {
-          missingEmployeeRowCount += 1;
-          if (includeResults) {
-            results.push({
-              ok: false,
-              taxYear,
-              reason: "employee_not_registered",
-              employeeId: mapping.employeeId,
-            });
+          // Postgres에 사원 행 자동 생성 (Oracle 사원이 아직 로그인하지 않은 경우)
+          try {
+            await pool.query(
+              `INSERT INTO employees (employee_id, name, team, password, join_date, points)
+               VALUES ($1, $2, '', '0000', '2000-01-01', 0)
+               ON CONFLICT (employee_id) DO NOTHING`,
+              [mapping.employeeId, mapping.employeeId]
+            );
+            mapping.existsInEmployees = true;
+          } catch (upsertErr) {
+            missingEmployeeRowCount += 1;
+            if (includeResults) {
+              results.push({
+                ok: false,
+                taxYear,
+                reason: "employee_row_create_failed",
+                employeeId: mapping.employeeId,
+              });
+            }
+            continue;
           }
-          continue;
         }
 
         try {
