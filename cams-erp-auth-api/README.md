@@ -96,9 +96,19 @@ GET /api/erp/employees
 
 ---
 
-## 다른 앱에서 호출 예시
+## 호출 예시 (언어별)
 
-### Node.js
+아래 예시는 모두 **로그인 인증** API 호출입니다. 사용하는 언어에 맞는 코드를 복사하세요.
+
+### curl (터미널에서 바로 테스트)
+```bash
+curl -X POST https://selfservice.icams.co.kr/api/erp/login \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: 6147" \
+  -d '{"employeeId":"103485","password":"mypassword"}'
+```
+
+### JavaScript / Node.js
 ```javascript
 const res = await fetch("https://selfservice.icams.co.kr/api/erp/login", {
   method: "POST",
@@ -110,7 +120,7 @@ const res = await fetch("https://selfservice.icams.co.kr/api/erp/login", {
 });
 const data = await res.json();
 if (data.authenticated) {
-  console.log(`${data.employee.name}님 로그인 성공`);
+  console.log(data.employee.name + "님 로그인 성공");
 }
 ```
 
@@ -125,15 +135,84 @@ res = requests.post(
 )
 data = res.json()
 if data.get("authenticated"):
-    print(f"{data['employee']['name']}님 로그인 성공")
+    print(data["employee"]["name"] + "님 로그인 성공")
 ```
 
-### curl
-```bash
-curl -X POST https://selfservice.icams.co.kr/api/erp/login \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: 6147" \
-  -d '{"employeeId":"103485","password":"mypassword"}'
+### Java
+```java
+HttpClient client = HttpClient.newHttpClient();
+String body = "{\"employeeId\":\"103485\",\"password\":\"mypassword\"}";
+HttpRequest request = HttpRequest.newBuilder()
+    .uri(URI.create("https://selfservice.icams.co.kr/api/erp/login"))
+    .header("Content-Type", "application/json")
+    .header("x-api-key", "6147")
+    .POST(HttpRequest.BodyPublishers.ofString(body))
+    .build();
+HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+System.out.println(response.body());
+```
+
+### C# (.NET)
+```csharp
+using var client = new HttpClient();
+client.DefaultRequestHeaders.Add("x-api-key", "6147");
+var content = new StringContent(
+    "{\"employeeId\":\"103485\",\"password\":\"mypassword\"}",
+    System.Text.Encoding.UTF8, "application/json");
+var res = await client.PostAsync("https://selfservice.icams.co.kr/api/erp/login", content);
+var json = await res.Content.ReadAsStringAsync();
+Console.WriteLine(json);
+```
+
+### PHP
+```php
+$ch = curl_init("https://selfservice.icams.co.kr/api/erp/login");
+curl_setopt_array($ch, [
+    CURLOPT_POST => true,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_HTTPHEADER => [
+        "Content-Type: application/json",
+        "x-api-key: 6147",
+    ],
+    CURLOPT_POSTFIELDS => json_encode([
+        "employeeId" => "103485",
+        "password" => "mypassword",
+    ]),
+]);
+$response = curl_exec($ch);
+curl_close($ch);
+$data = json_decode($response, true);
+if ($data["authenticated"]) {
+    echo $data["employee"]["name"] . "님 로그인 성공";
+}
+```
+
+### Kotlin (Android)
+```kotlin
+val client = OkHttpClient()
+val body = """{"employeeId":"103485","password":"mypassword"}"""
+    .toRequestBody("application/json".toMediaType())
+val request = Request.Builder()
+    .url("https://selfservice.icams.co.kr/api/erp/login")
+    .addHeader("x-api-key", "6147")
+    .post(body)
+    .build()
+val response = client.newCall(request).execute()
+println(response.body?.string())
+```
+
+### Swift (iOS)
+```swift
+var request = URLRequest(url: URL(string: "https://selfservice.icams.co.kr/api/erp/login")!)
+request.httpMethod = "POST"
+request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+request.setValue("6147", forHTTPHeaderField: "x-api-key")
+request.httpBody = try? JSONSerialization.data(withJSONObject: [
+    "employeeId": "103485", "password": "mypassword"
+])
+let (data, _) = try await URLSession.shared.data(for: request)
+let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+print(json ?? [:])
 ```
 
 ---
