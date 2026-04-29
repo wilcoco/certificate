@@ -2493,7 +2493,7 @@ app.post("/api/orders", requireAuth, async (req, res) => {
 
     // 주문 생성
     const { rows: orderRows } = await pool.query(
-      "INSERT INTO shop_orders (employee_id, product_id, product_name, point_cost, quantity) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+      "INSERT INTO shop_orders (employee_id, product_id, product_name, point_cost, quantity, status) VALUES ($1, $2, $3, $4, $5, 'ordered') RETURNING *",
       [employeeId, productId, product.name, totalCost, quantity]
     );
 
@@ -2504,6 +2504,58 @@ app.post("/api/orders", requireAuth, async (req, res) => {
   } catch (error) {
     console.error("상품 구매 실패", error);
     return res.status(500).json({ message: "구매 처리에 실패했습니다." });
+  }
+});
+
+// 주문 취소 (본인, 접수완료 상태에서만)
+app.post("/api/orders/:id/cancel", requireAuth, async (req, res) => {
+  try {
+    const orderId = Number(req.params.id);
+    const employeeId = req.session.employee.employeeId;
+
+    const { rows } = await pool.query(
+      "SELECT * FROM shop_orders WHERE id = $1 AND employee_id = $2",
+      [orderId, employeeId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: "주문을 찾을 수 없습니다." });
+    }
+
+    const order = rows[0];
+    if (order.status !== "ordered") {
+      return res.status(400).json({ message: "배송완료된 주문은 취소할 수 없습니다." });
+    }
+
+    // 상태 변경
+    await pool.query(
+      "UPDATE shop_orders SET status = 'cancelled' WHERE id = $1",
+      [orderId]
+    );
+
+    // 포인트 환불
+    await pool.query(
+      "UPDATE employees SET points = COALESCE(points, 0) + $1 WHERE employee_id = $2",
+      [order.point_cost, employeeId]
+    );
+
+    // 재고 복구
+    await pool.query(
+      "UPDATE shop_products SET stock = stock + $1 WHERE id = $2 AND stock >= 0",
+      [order.quantity, order.product_id]
+    );
+
+    const { rows: empRows } = await pool.query(
+      "SELECT points FROM employees WHERE employee_id = $1",
+      [employeeId]
+    );
+
+    return res.json({
+      message: "주문이 취소되었습니다.",
+      remainingPoints: empRows[0]?.points || 0,
+    });
+  } catch (error) {
+    console.error("주문 취소 실패", error);
+    return res.status(500).json({ message: "주문 취소에 실패했습니다." });
   }
 });
 
@@ -3000,6 +3052,33 @@ app.get("/api/admin/orders", requireAuth, requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("주문 목록 조회 실패", error);
     return res.status(500).json({ message: "주문 목록을 불러올 수 없습니다." });
+  }
+});
+
+// 관리자: 주문 상태 변경
+app.put("/api/admin/orders/:id/status", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const orderId = Number(req.params.id);
+    const newStatus = normalizeString(req.body?.status);
+    const validStatuses = ["ordered", "delivered", "cancelled"];
+
+    if (!validStatuses.includes(newStatus)) {
+      return res.status(400).json({ message: `유효한 상태: ${validStatuses.join(", ")}` });
+    }
+
+    const { rows } = await pool.query(
+      "UPDATE shop_orders SET status = $1 WHERE id = $2 RETURNING *",
+      [newStatus, orderId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ message: "주문을 찾을 수 없습니다." });
+    }
+
+    return res.json({ order: rows[0] });
+  } catch (error) {
+    console.error("주문 상태 변경 실패", error);
+    return res.status(500).json({ message: "주문 상태 변경에 실패했습니다." });
   }
 });
 

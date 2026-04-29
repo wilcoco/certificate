@@ -496,8 +496,16 @@ const initSchema = async () => {
       product_name TEXT NOT NULL,
       point_cost INTEGER NOT NULL,
       quantity INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'ordered',
       ordered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+
+  await pool.query(`
+    DO $$ BEGIN
+      ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ordered';
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END $$;
   `);
 
   const { rows } = await pool.query("SELECT COUNT(*)::int AS count FROM employees");

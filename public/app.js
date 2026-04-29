@@ -535,19 +535,52 @@ const renderShop = () => {
   renderMyOrders();
 };
 
+const orderStatusLabel = (status) => {
+  switch (status) {
+    case "ordered": return '<span style="color:#2563eb;font-weight:600">접수완료</span>';
+    case "delivered": return '<span style="color:#27ae60;font-weight:600">배송완료</span>';
+    case "cancelled": return '<span style="color:#95a5a6;font-weight:600">취소됨</span>';
+    default: return status || "-";
+  }
+};
+
 const renderMyOrders = () => {
   if (!myOrdersTable) return;
   myOrdersTable.innerHTML = "";
   state.myOrders.forEach((o) => {
     const row = document.createElement("tr");
     const dateStr = o.ordered_at ? new Date(o.ordered_at).toLocaleString("ko-KR") : "-";
+    const cancelBtn = o.status === "ordered"
+      ? `<button class="btn-cancel-order" data-order-id="${o.id}" style="font-size:12px;padding:4px 10px;background:#e74c3c;color:#fff;border:none;border-radius:4px;cursor:pointer">취소</button>`
+      : "";
     row.innerHTML = `
       <td>${o.product_name || "-"}</td>
       <td>${formatPoints(o.point_cost)}</td>
       <td>${o.quantity || 1}</td>
+      <td>${orderStatusLabel(o.status)}</td>
       <td>${dateStr}</td>
+      <td>${cancelBtn}</td>
     `;
     myOrdersTable.appendChild(row);
+  });
+
+  myOrdersTable.querySelectorAll(".btn-cancel-order").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("이 주문을 취소하시겠습니까? 포인트가 환불됩니다.")) return;
+      btn.disabled = true;
+      btn.textContent = "취소 중...";
+      try {
+        const data = await fetchJson(`/api/orders/${btn.dataset.orderId}/cancel`, { method: "POST" });
+        state.myPoints = data.remainingPoints;
+        if (myPointsBadge) myPointsBadge.textContent = formatPoints(state.myPoints);
+        alert(data.message || "주문이 취소되었습니다.");
+        await loadShop();
+      } catch (error) {
+        alert(error.message);
+        btn.disabled = false;
+        btn.textContent = "취소";
+      }
+    });
   });
 };
 
@@ -910,15 +943,59 @@ const loadAdminOrders = async () => {
     (data.orders || []).forEach((o) => {
       const row = document.createElement("tr");
       const dateStr = o.ordered_at ? new Date(o.ordered_at).toLocaleString("ko-KR") : "-";
+      let actionHtml = "";
+      if (o.status === "ordered") {
+        actionHtml = `<button class="btn-deliver-order" data-order-id="${o.id}" style="font-size:12px;padding:4px 10px;background:#27ae60;color:#fff;border:none;border-radius:4px;cursor:pointer">배송완료</button>`;
+      } else if (o.status === "delivered") {
+        actionHtml = `<button class="btn-revert-order" data-order-id="${o.id}" style="font-size:12px;padding:4px 10px;background:#f39c12;color:#fff;border:none;border-radius:4px;cursor:pointer">접수로 되돌리기</button>`;
+      }
       row.innerHTML = `
         <td>${o.employee_id}</td>
         <td>${o.employee_name || "-"}</td>
         <td>${o.product_name || "-"}</td>
         <td>${formatPoints(o.point_cost)}</td>
         <td>${o.quantity || 1}</td>
+        <td>${orderStatusLabel(o.status)}</td>
         <td>${dateStr}</td>
+        <td>${actionHtml}</td>
       `;
       adminOrdersTable.appendChild(row);
+    });
+
+    adminOrdersTable.querySelectorAll(".btn-deliver-order").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        btn.textContent = "처리 중...";
+        try {
+          await fetchJson(`/api/admin/orders/${btn.dataset.orderId}/status`, {
+            method: "PUT",
+            body: JSON.stringify({ status: "delivered" }),
+          });
+          loadAdminOrders();
+        } catch (err) {
+          alert("상태 변경 실패: " + err.message);
+          btn.disabled = false;
+          btn.textContent = "배송완료";
+        }
+      });
+    });
+
+    adminOrdersTable.querySelectorAll(".btn-revert-order").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        btn.textContent = "처리 중...";
+        try {
+          await fetchJson(`/api/admin/orders/${btn.dataset.orderId}/status`, {
+            method: "PUT",
+            body: JSON.stringify({ status: "ordered" }),
+          });
+          loadAdminOrders();
+        } catch (err) {
+          alert("상태 변경 실패: " + err.message);
+          btn.disabled = false;
+          btn.textContent = "접수로 되돌리기";
+        }
+      });
     });
   } catch (error) {
     console.error("관리자 주문 목록 로드 실패", error);
