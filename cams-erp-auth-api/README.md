@@ -1,34 +1,17 @@
 # CAMS ERP 인증 API
 
-기존 CAMS Self Service 서버(`selfservice.icams.co.kr`)에서 제공하는 **사번 인증** 및 **사원정보 조회** REST API.  
-다른 사내 앱에서 HTTP로 호출하여 ERP 로그인/사원조회 기능을 공유할 수 있습니다.
-
-> **별도 서버 불필요** — 기존 서버의 `/api/erp/*` 경로로 제공됩니다.
+CAMS Self Service 서버에서 제공하는 **ERP 사번 인증** 및 **사원정보 조회** REST API입니다.  
+별도 서버 설치 없이, 아래 정보만으로 바로 사용할 수 있습니다.
 
 ---
 
-## 활성화 방법
+## 접속 정보
 
-Railway 환경변수에 아래 하나만 추가:
-
-```
-ERP_API_KEY=your-secret-api-key-here
-```
-
-설정하지 않으면 ERP API는 비활성화 상태(503)입니다.
-
----
-
-## API 엔드포인트
-
-**Base URL**: `https://selfservice.icams.co.kr`
-
-### 인증 공통
-
-모든 `/api/erp/*` 요청에 아래 헤더 필요:
-```
-x-api-key: {ERP_API_KEY}
-```
+| 항목 | 값 |
+|------|----|
+| **Base URL** | `https://selfservice.icams.co.kr` |
+| **API Key** | `6147` |
+| **인증 방법** | 모든 요청에 `x-api-key: 6147` 헤더 추가 |
 
 ---
 
@@ -121,7 +104,7 @@ const res = await fetch("https://selfservice.icams.co.kr/api/erp/login", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
-    "x-api-key": "your-secret-key",
+    "x-api-key": "6147",
   },
   body: JSON.stringify({ employeeId: "103485", password: "mypassword" }),
 });
@@ -138,7 +121,7 @@ import requests
 res = requests.post(
     "https://selfservice.icams.co.kr/api/erp/login",
     json={"employeeId": "103485", "password": "mypassword"},
-    headers={"x-api-key": "your-secret-key"},
+    headers={"x-api-key": "6147"},
 )
 data = res.json()
 if data.get("authenticated"):
@@ -149,7 +132,7 @@ if data.get("authenticated"):
 ```bash
 curl -X POST https://selfservice.icams.co.kr/api/erp/login \
   -H "Content-Type: application/json" \
-  -H "x-api-key: your-secret-key" \
+  -H "x-api-key: 6147" \
   -d '{"employeeId":"103485","password":"mypassword"}'
 ```
 
