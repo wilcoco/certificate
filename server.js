@@ -3003,6 +3003,120 @@ app.get("/api/admin/orders", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+// ======== 외부 연동 ERP API (/api/erp/*) ========
+// 다른 앱에서 x-api-key 헤더로 호출 가능
+const ERP_API_KEY = process.env.ERP_API_KEY || "";
+
+const requireErpApiKey = (req, res, next) => {
+  if (!ERP_API_KEY) {
+    return res.status(503).json({ message: "ERP API가 비활성화 상태입니다. ERP_API_KEY 환경변수를 설정하세요." });
+  }
+  const key = req.headers["x-api-key"];
+  if (key !== ERP_API_KEY) {
+    return res.status(401).json({ message: "Invalid API key" });
+  }
+  next();
+};
+
+// POST /api/erp/login — 사번 + 비밀번호 인증
+app.post("/api/erp/login", requireErpApiKey, async (req, res) => {
+  const employeeId = normalizeString(req.body?.employeeId);
+  const password = normalizeString(req.body?.password);
+
+  if (!employeeId || !password) {
+    return res.status(400).json({ message: "employeeId와 password를 입력하세요." });
+  }
+
+  if (!isOracleAuthConfigured()) {
+    return res.status(503).json({ message: "Oracle 인증이 설정되지 않았습니다." });
+  }
+
+  try {
+    const record = await fetchOracleLoginRecord(employeeId);
+    if (!record) {
+      return res.status(401).json({ message: "사원을 찾을 수 없습니다." });
+    }
+
+    const storedPassword = normalizeString(record.etc6);
+    if (storedPassword !== password) {
+      return res.status(401).json({ message: "비밀번호가 일치하지 않습니다." });
+    }
+
+    const formatErpDate = (d) => {
+      if (!d) return "";
+      const digits = String(d).replace(/[^0-9]/g, "");
+      if (digits.length === 8) return `${digits.slice(0,4)}-${digits.slice(4,6)}-${digits.slice(6,8)}`;
+      return d;
+    };
+
+    return res.json({
+      authenticated: true,
+      employee: {
+        employeeId: normalizeString(record.employeeId),
+        name: normalizeString(record.name),
+        department: normalizeString(record.jobGroup),
+        address: normalizeString(record.address),
+        joinDate: formatErpDate(record.joinDate),
+        retirementDate: formatErpDate(record.retirementDate),
+      },
+    });
+  } catch (error) {
+    console.error("[erp/login] 오류:", error.message);
+    return res.status(500).json({ message: "인증 처리 중 오류가 발생했습니다." });
+  }
+});
+
+// GET /api/erp/employee/:id — 사원 프로필 조회
+app.get("/api/erp/employee/:id", requireErpApiKey, async (req, res) => {
+  const employeeId = normalizeString(req.params.id);
+  if (!employeeId) {
+    return res.status(400).json({ message: "employeeId가 필요합니다." });
+  }
+
+  try {
+    const profile = await fetchOracleEmployeeProfile(employeeId);
+    if (!profile) {
+      return res.status(404).json({ message: "사원을 찾을 수 없습니다." });
+    }
+
+    const formatErpDate = (d) => {
+      if (!d) return "";
+      const digits = String(d).replace(/[^0-9]/g, "");
+      if (digits.length === 8) return `${digits.slice(0,4)}-${digits.slice(4,6)}-${digits.slice(6,8)}`;
+      return d;
+    };
+
+    return res.json({
+      employee: {
+        employeeId: normalizeString(profile.employeeId),
+        name: normalizeString(profile.name),
+        residentNumber: normalizeString(profile.residentNumber),
+        department: normalizeString(profile.jobGroup),
+        address: normalizeString(profile.address),
+        joinDate: formatErpDate(profile.joinDate),
+        retirementDate: formatErpDate(profile.retirementDate),
+      },
+    });
+  } catch (error) {
+    console.error("[erp/employee] 오류:", error.message);
+    return res.status(500).json({ message: "사원 조회 중 오류가 발생했습니다." });
+  }
+});
+
+// GET /api/erp/employees — 사원 목록
+app.get("/api/erp/employees", requireErpApiKey, async (req, res) => {
+  try {
+    const employees = await fetchOracleEmployees();
+    if (!employees) {
+      return res.status(503).json({ message: "Oracle 연결을 사용할 수 없습니다." });
+    }
+    return res.json({ count: employees.length, employees });
+  } catch (error) {
+    console.error("[erp/employees] 오류:", error.message);
+    return res.status(500).json({ message: "사원 목록 조회 중 오류가 발생했습니다." });
+  }
+});
+
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });

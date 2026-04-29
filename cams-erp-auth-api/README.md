@@ -1,64 +1,33 @@
-# CAMS ERP 인증 API 서버
+# CAMS ERP 인증 API
 
-Oracle ERP(iCAMS) 사원 테이블을 이용한 **사번 인증** 및 **사원정보 조회** REST API.
+기존 CAMS Self Service 서버(`selfservice.icams.co.kr`)에서 제공하는 **사번 인증** 및 **사원정보 조회** REST API.  
 다른 사내 앱에서 HTTP로 호출하여 ERP 로그인/사원조회 기능을 공유할 수 있습니다.
 
+> **별도 서버 불필요** — 기존 서버의 `/api/erp/*` 경로로 제공됩니다.
+
 ---
 
-## 빠른 시작
+## 활성화 방법
 
-```bash
-# 1. 의존성 설치
-cd cams-erp-auth-api
-npm install
+Railway 환경변수에 아래 하나만 추가:
 
-# 2. 환경변수 설정
-cp env.example .env
-# .env 파일 편집하여 Oracle 접속 정보, API_KEY 입력
-
-# 3. 실행
-npm start
-# → http://localhost:4000 에서 실행
+```
+ERP_API_KEY=your-secret-api-key-here
 ```
 
----
-
-## 환경변수
-
-| 변수 | 필수 | 기본값 | 설명 |
-|------|------|--------|------|
-| `PORT` | | `4000` | API 서버 포트 |
-| `API_KEY` | ✅ | | API 인증 키 (x-api-key 헤더) |
-| `ORACLE_USER` | ✅ | | Oracle 계정 |
-| `ORACLE_PASSWORD` | ✅ | | Oracle 비밀번호 |
-| `ORACLE_CONNECT_STRING` | ✅ | | Oracle 접속 문자열 (host:port/service) |
-| `ORACLE_USE_THICK_MODE` | | `false` | Oracle Thick Mode 사용 여부 |
-| `ORACLE_CLIENT_LIB_DIR` | | | Instant Client 경로 |
-| `ORACLE_EMP_TABLE` | | `T_XX_BSC` | 사원 마스터 테이블 |
-| `ORACLE_DEPT_TABLE` | | `T_XX_DPT` | 부서 마스터 테이블 |
-| `ORACLE_PASS_TABLE` | | `T_XX_PWD` | 비밀번호 테이블 |
-| `ORACLE_EMP_ID_PREFIXES` | | `103,2` | 사원목록 사번 필터 |
-
-컬럼 이름도 환경변수로 변경 가능 (상세: `env.example` 참조).
+설정하지 않으면 ERP API는 비활성화 상태(503)입니다.
 
 ---
 
 ## API 엔드포인트
 
+**Base URL**: `https://selfservice.icams.co.kr`
+
 ### 인증 공통
 
-모든 `/api/*` 요청에 아래 헤더 필요:
+모든 `/api/erp/*` 요청에 아래 헤더 필요:
 ```
-x-api-key: {API_KEY}
-```
-
-### 헬스체크
-
-```
-GET /health
-```
-```json
-{ "status": "ok", "oracle": true }
+x-api-key: {ERP_API_KEY}
 ```
 
 ---
@@ -66,7 +35,7 @@ GET /health
 ### 1. 로그인 인증
 
 ```
-POST /api/login
+POST /api/erp/login
 Content-Type: application/json
 ```
 
@@ -103,7 +72,7 @@ Content-Type: application/json
 ### 2. 사원 프로필 조회
 
 ```
-GET /api/employee/{사번}
+GET /api/erp/employee/{사번}
 ```
 
 **성공 응답** (200)
@@ -128,7 +97,7 @@ GET /api/employee/{사번}
 ### 3. 사원 목록
 
 ```
-GET /api/employees
+GET /api/erp/employees
 ```
 
 **응답** (200)
@@ -142,32 +111,13 @@ GET /api/employees
 }
 ```
 
-사번 접두사 필터(`ORACLE_EMP_ID_PREFIXES`)에 해당하는 사원만 조회됩니다.
-
----
-
-## 배포 (Docker)
-
-```bash
-docker build -t cams-erp-auth-api .
-docker run -d \
-  -p 4000:4000 \
-  -e API_KEY=your-secret-key \
-  -e ORACLE_USER=myuser \
-  -e ORACLE_PASSWORD=mypass \
-  -e ORACLE_CONNECT_STRING=192.168.1.100:1521/ORCL \
-  cams-erp-auth-api
-```
-
-Railway, Render 등 PaaS에 배포하려면 환경변수만 설정하면 됩니다.
-
 ---
 
 ## 다른 앱에서 호출 예시
 
 ### Node.js
 ```javascript
-const res = await fetch("http://erp-auth-api:4000/api/login", {
+const res = await fetch("https://selfservice.icams.co.kr/api/erp/login", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
@@ -186,7 +136,7 @@ if (data.authenticated) {
 import requests
 
 res = requests.post(
-    "http://erp-auth-api:4000/api/login",
+    "https://selfservice.icams.co.kr/api/erp/login",
     json={"employeeId": "103485", "password": "mypassword"},
     headers={"x-api-key": "your-secret-key"},
 )
@@ -197,7 +147,7 @@ if data.get("authenticated"):
 
 ### curl
 ```bash
-curl -X POST http://localhost:4000/api/login \
+curl -X POST https://selfservice.icams.co.kr/api/erp/login \
   -H "Content-Type: application/json" \
   -H "x-api-key: your-secret-key" \
   -d '{"employeeId":"103485","password":"mypassword"}'
